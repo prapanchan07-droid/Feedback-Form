@@ -1,0 +1,216 @@
+# Bannari Amman Institute of Technology - Career Guidance Program Feedback Form Template
+# Canvas dimensions used as baseline resolution reference
+canvas:
+  width: 2479
+  height: 3508
+  dpi: 300
+
+# Registration corner markers (top-left, top-right, bottom-right, bottom-left)
+# Normalized bounding coordinates [x_min, y_min, x_max, y_max] in [0, 1] range
+registration_markers:
+  top_left: [0.040, 0.028, 0.072, 0.051]     # pixel: ~[100, 100, 180, 180]
+  top_right: [0.927, 0.028, 0.960, 0.051]    # pixel: ~[2299, 100, 2379, 180]
+  bottom_right: [0.927, 0.948, 0.960, 0.971] # pixel: ~[2299, 3328, 2379, 3408]
+  bottom_left: [0.040, 0.948, 0.072, 0.971]  # pixel: ~[100, 3328, 180, 3408]
+
+fields:
+  student_name:
+    type: "character_boxes"
+    count: 15
+    normalized_bbox: [0.080, 0.213, 0.830, 0.253]
+    boxes:
+      - index: 0
+        normalized_bbox: [0.080, 0.213, 0.124, 0.253]
+      - index: 1
+        normalized_bbox: [0.131, 0.213, 0.175, 0.253]
+      - index: 2
+        normalized_bbox: [0.181, 0.213, 0.225, 0.253]
+      - index: 3
+        normalized_bbox: [0.231, 0.213, 0.275, 0.253]
+      - index: 4
+        normalized_bbox: [0.282, 0.213, 0.326, 0.253]
+      - index: 5
+        normalized_bbox: [0.332, 0.213, 0.376, 0.253]
+      - index: 6
+        normalized_bbox: [0.383, 0.213, 0.427, 0.253]
+      - index: 7
+        normalized_bbox: [0.433, 0.213, 0.477, 0.253]
+      - index: 8
+        normalized_bbox: [0.484, 0.213, 0.528, 0.253]
+      - index: 9
+        normalized_bbox: [0.534, 0.213, 0.578, 0.253]
+      - index: 10
+        normalized_bbox: [0.584, 0.213, 0.628, 0.253]
+      - index: 11
+        normalized_bbox: [0.635, 0.213, 0.679, 0.253]
+      - index: 12
+        normalized_bbox: [0.685, 0.213, 0.729, 0.253]
+      - index: 13
+        normalized_bbox: [0.736, 0.213, 0.780, 0.253]
+      - index: 14
+        normalized_bbox: [0.786, 0.213, 0.830, 0.253]
+
+  school_name:
+    type: "character_boxes"
+    count: 18
+    normalized_bbox: [0.080, 0.353, 0.852, 0.387]
+    boxes:
+      - index: 0
+        normalized_bbox: [0.080, 0.353, 0.118, 0.387]
+      - index: 1
+        normalized_bbox: [0.123, 0.353, 0.161, 0.387]
+      - index: 2
+        normalized_bbox: [0.167, 0.353, 0.205, 0.387]
+      - index: 3
+        normalized_bbox: [0.210, 0.353, 0.248, 0.387]
+      - index: 4
+        normalized_bbox: [0.253, 0.353, 0.291, 0.387]
+      - index: 5
+        normalized_bbox: [0.296, 0.353, 0.334, 0.387]
+      - index: 6
+        normalized_bbox: [0.339, 0.353, 0.377, 0.387]
+      - index: 7
+        normalized_bbox: [0.382, 0.353, 0.420, 0.387]
+      - index: 8
+        normalized_bbox: [0.425, 0.353, 0.463, 0.387]
+      - index: 9
+        normalized_bbox: [0.469, 0.353, 0.507, 0.387]
+      - index: 10
+        normalized_bbox: [0.512, 0.353, 0.550, 0.387]
+      - index: 11
+        normalized_bbox: [0.555, 0.353, 0.593, 0.387]
+      - index: 12
+        normalized_bbox: [0.598, 0.353, 0.636, 0.387]
+      - index: 13
+        normalized_bbox: [0.641, 0.353, 0.679, 0.387]
+      - index: 14
+        normalized_bbox: [0.684, 0.353, 0.722, 0.387]
+      - index: 15
+        normalized_bbox: [0.728, 0.353, 0.766, 0.387]
+      - index: 16
+        normalized_bbox: [0.771, 0.353, 0.809, 0.387]
+      - index: 17
+        normalized_bbox: [0.814, 0.353, 0.852, 0.387]
+
+  date:
+    type: "text_region"
+    normalized_bbox: [0.080, 0.100, 0.450, 0.135]
+
+  student_mobile:
+    type: "character_boxes"
+    count: 10
+    normalized_bbox: [0.080, 0.142, 0.578, 0.182]
+    boxes:
+      - index: 0
+        normalized_bbox: [0.080, 0.142, 0.124, 0.182]
+      - index: 1
+        normalized_bbox: [0.131, 0.142, 0.175, 0.182]
+      - index: 2
+        normalized_bbox: [0.181, 0.142, 0.225, 0.182]
+      - index: 3
+        normalized_bbox: [0.231, 0.142, 0.275, 0.182]
+      - index: 4
+        normalized_bbox: [0.282, 0.142, 0.326, 0.182]
+      - index: 5
+        normalized_bbox: [0.332, 0.142, 0.376, 0.182]
+      - index: 6
+        normalized_bbox: [0.383, 0.142, 0.427, 0.182]
+      - index: 7
+        normalized_bbox: [0.433, 0.142, 0.477, 0.182]
+      - index: 8
+        normalized_bbox: [0.484, 0.142, 0.528, 0.182]
+      - index: 9
+        normalized_bbox: [0.534, 0.142, 0.578, 0.182]
+
+  parent_mobile:
+    type: "text_region"
+    normalized_bbox: [0.080, 0.185, 0.578, 0.210]
+
+  email:
+    type: "text_region"
+    normalized_bbox: [0.080, 0.258, 0.700, 0.280]
+
+  cutoff_marks:
+    type: "character_boxes"
+    count: 6
+    normalized_bbox: [0.080, 0.285, 0.326, 0.322]
+    boxes:
+      - index: 0
+        type: "digit"
+        normalized_bbox: [0.080, 0.285, 0.120, 0.322]
+      - index: 1
+        type: "digit"
+        normalized_bbox: [0.125, 0.285, 0.165, 0.322]
+      - index: 2
+        type: "digit"
+        normalized_bbox: [0.170, 0.285, 0.210, 0.322]
+      - index: 3
+        type: "decimal"
+        normalized_bbox: [0.215, 0.285, 0.235, 0.322]
+      - index: 4
+        type: "digit"
+        normalized_bbox: [0.240, 0.285, 0.280, 0.322]
+      - index: 5
+        type: "digit"
+        normalized_bbox: [0.285, 0.285, 0.325, 0.322]
+
+  questionnaire:
+    type: "checkbox_group"
+    questions:
+      - question_id: "q1"
+        label: "Are you interested in joining BIT for B.E/B.Tech courses?"
+        options:
+          - label: "Yes"
+            center_normalized: [0.443, 0.426]
+            radius_normalized: 0.011
+          - label: "No"
+            center_normalized: [0.564, 0.426]
+            radius_normalized: 0.011
+
+      - question_id: "q2"
+        label: "Rate the usefulness of Career Guidance Programme"
+        options:
+          - label: "Excellent"
+            center_normalized: [0.443, 0.451]
+            radius_normalized: 0.011
+          - label: "Good"
+            center_normalized: [0.564, 0.451]
+            radius_normalized: 0.011
+          - label: "Satisfactory"
+            center_normalized: [0.685, 0.451]
+            radius_normalized: 0.011
+          - label: "Fair"
+            center_normalized: [0.806, 0.451]
+            radius_normalized: 0.011
+          - label: "Poor"
+            center_normalized: [0.927, 0.451]
+            radius_normalized: 0.011
+
+      - question_id: "q3"
+        label: "Rate the effectiveness and guidance of the speakers"
+        options:
+          - label: "Excellent"
+            center_normalized: [0.443, 0.477]
+            radius_normalized: 0.011
+          - label: "Good"
+            center_normalized: [0.564, 0.477]
+            radius_normalized: 0.011
+          - label: "Satisfactory"
+            center_normalized: [0.685, 0.477]
+            radius_normalized: 0.011
+          - label: "Fair"
+            center_normalized: [0.806, 0.477]
+            radius_normalized: 0.011
+          - label: "Poor"
+            center_normalized: [0.927, 0.477]
+            radius_normalized: 0.011
+
+      - question_id: "q4"
+        label: "Are you interested in taking choice filling assistance provided in BIT?"
+        options:
+          - label: "Yes"
+            center_normalized: [0.443, 0.503]
+            radius_normalized: 0.011
+          - label: "No"
+            center_normalized: [0.564, 0.503]
+            radius_normalized: 0.011
