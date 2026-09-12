@@ -1,14 +1,16 @@
+import os
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
 import io
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, Optional
+from backend.app.core.config import get_form_template_config
 
 class ImagePreprocessor:
     @staticmethod
     def load_and_fix_exif(file_bytes: bytes) -> np.ndarray:
         """
-        Loads image bytes, applies EXIF rotation fix via PIL, and converts to OpenCV BGR format.
+        Loads image bytes, applies EXIF rotation fix via PIL once, and converts to OpenCV BGR format.
         """
         pil_img = Image.open(io.BytesIO(file_bytes))
         pil_img = ImageOps.exif_transpose(pil_img)
@@ -18,38 +20,10 @@ class ImagePreprocessor:
         return bgr
 
     @staticmethod
-    def generate_variants(image: np.ndarray) -> Dict[str, np.ndarray]:
-        """
-        Generates original, grayscale, contrast-enhanced, and adaptive thresholded variants.
-        """
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
-
-        # Denoising
-        denoised = cv2.GaussianBlur(gray, (3, 3), 0)
-
-        # Contrast Normalization (CLAHE)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(denoised)
-
-        # Adaptive Thresholding
-        thresholded = cv2.adaptiveThreshold(
-            enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 2
-        )
-
-        return {
-            "original": image,
-            "grayscale": gray,
-            "enhanced": enhanced,
-            "thresholded": thresholded
-        }
-
-    @staticmethod
     def deskew_image(gray: np.ndarray) -> Tuple[np.ndarray, float]:
         """
-        Calculates skew angle via Minimum Area Bounding Box on thresholded contours and rotates gray image.
+        Calculates skew angle via Minimum Area Bounding Box on Otsu thresholding and rotates image if angle is valid.
+        Ignores angles < 0.5 deg or > 15.0 deg to prevent unnecessary rotation.
         """
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         coords = np.column_stack(np.where(thresh > 0))
@@ -62,7 +36,7 @@ class ImagePreprocessor:
         else:
             angle = -angle
 
-        if abs(angle) < 0.2 or abs(angle) > 20.0:
+        if abs(angle) < 0.5 or abs(angle) > 15.0:
             return gray, 0.0  # Ignore negligible or extreme angles
 
         (h, w) = gray.shape[:2]
@@ -70,3 +44,116 @@ class ImagePreprocessor:
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
         rotated = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         return rotated, angle
+
+    @staticmethod
+    def generate_variants(image: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        Generates original, grayscale, contrast-enhanced, and adaptive thresholded variants.
+        """
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+
+        denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(denoised)
+        thresholded = cv2.adaptiveThreshold(
+            enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 2
+        )
+
+        return {
+            "original": image,
+            "grayscale": gray,
+            "enhanced": enhanced,
+            "thresholded": thresholded
+        }
+
+    @staticmethod
+    def draw_roi_overlay(image: np.ndarray, template_config: Optional[Dict[str, Any]] = None) -> np.ndarray:
+        """
+        Draws colored bounding boxes and text labels for form fields onto a copy of the image.
+        Used for preprocessing debug inspection (06_ROI_overlay.png).
+        """
+        config = template_config or get_form_template_config()
+        overlay = image.copy()
+        h, w = overlay.shape[:2]
+        fields_cfg = config.get("fields", {})
+
+        color_map = {
+            "student_name": (0, 0, 255),        # Red
+            "school_name": (0, 165, 255),      # Orange
+            "date": (255, 0, 0),               # Blue
+            "student_mobile": (0, 255, 0),     # Green
+            "parent_mobile": (255, 255, 0),    # Cyan
+            "email": (255, 0, 255),            # Magenta
+            "cutoff_marks": (0, 255, 255),     # Yellow
+            "questionnaire": (128, 0, 128)     # Purple
+        }
+
+        for field_name, cfg in fields_cfg.items():
+            color = color_map.get(field_name, (0, 255, 0))
+            fieldType = cfg.get("type")
+
+            if fieldType == "character_boxes":
+                for box_item in cfg.get("boxes", []):
+                    if "normalized_bbox" in box_item:
+                        x1_n, y1_n, x2_n, y2_n = box_item["normalized_bbox"]
+                        x1, y1 = int(x1_n * w), int(y1_n * h)
+                        x2, y2 = int(x2_n * w), int(y2_n * h)
+                        cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
+
+                if "normalized_bbox" in cfg:
+                    x1_n, y1_n, x2_n, y2_n = cfg["normalized_bbox"]
+                    x1, y1 = int(x1_n * w), int(y1_n * h)
+                    cv2.putText(overlay, field_name.upper(), (x1, max(15, y1 - 5)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+            elif fieldType == "text_region":
+                if "normalized_bbox" in cfg:
+                    x1_n, y1_n, x2_n, y2_n = cfg["normalized_bbox"]
+                    x1, y1 = int(x1_n * w), int(y1_n * h)
+                    x2, y2 = int(x2_n * w), int(y2_n * h)
+                    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(overlay, field_name.upper(), (x1, max(15, y1 - 5)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+            elif fieldType in ("checkbox_group", "omr_group"):
+                for q in cfg.get("questions", []):
+                    q_id = q.get("question_id", "")
+                    for opt in q.get("options", []):
+                        if "center_normalized" in opt:
+                            cx_n, cy_n = opt["center_normalized"]
+                            r_n = opt.get("radius_normalized", 0.01)
+                            cx, cy = int(cx_n * w), int(cy_n * h)
+                            r = int(r_n * w)
+                            cv2.circle(overlay, (cx, cy), r, color, 2)
+                            cv2.putText(overlay, f"{q_id}:{opt.get('label')}", (cx - r, cy - r - 2),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+        return overlay
+
+    @staticmethod
+    def save_debug_stages(output_dir: str, stages: Dict[str, np.ndarray]) -> Dict[str, str]:
+        """
+        Saves preprocessing stage images for debug visualizer.
+        Returns dictionary of saved file paths.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        saved_paths = {}
+        stage_filenames = {
+            "01_original": "01_original.png",
+            "02_orientation_corrected": "02_orientation_corrected.png",
+            "03_deskewed": "03_deskewed.png",
+            "04_perspective_corrected": "04_perspective_corrected.png",
+            "05_final_preprocessed": "05_final_preprocessed.png",
+            "06_ROI_overlay": "06_ROI_overlay.png"
+        }
+
+        for stage_key, filename in stage_filenames.items():
+            if stage_key in stages and stages[stage_key] is not None:
+                filepath = os.path.join(output_dir, filename)
+                cv2.imwrite(filepath, stages[stage_key])
+                saved_paths[stage_key] = filepath
+
+        return saved_paths
