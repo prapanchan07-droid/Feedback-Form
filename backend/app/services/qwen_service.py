@@ -161,3 +161,71 @@ Strict Accuracy Rules:
                     backoff *= 2.0
 
         raise RuntimeError(f"Qwen Vision API extraction failed after {max_retries} attempts: {last_exception}")
+
+    def extract_field_crop(self, crop_image: np.ndarray, field_type: str) -> Tuple[Optional[str], float]:
+        """
+        Sends high-quality field ROI crop image to Qwen for independent second-pass verification of a specific field.
+        Does NOT show previous predictions. Instructs model to independently inspect visible characters.
+        """
+        if not self.api_key:
+            raise RuntimeError("Qwen Vision API key is not configured")
+
+        start_time = time.time()
+        base64_crop = self.encode_image_to_base64(crop_image, max_dim=1280)
+
+        if field_type == "student_mobile_number":
+            prompt = """Independently inspect the ten handwritten digit boxes in this image.
+Determine the digit visible in each box from left to right.
+Do not use or infer a previous prediction.
+Return ONLY a JSON object: {"value": "10-digit-string"}
+Example: {"value": "9876543210"}
+"""
+        elif field_type == "cut_off_marks":
+            prompt = """Independently inspect the handwritten cut off marks field in this image.
+Preserve every visible digit and decimal point exactly. Do not round or truncate.
+Return ONLY a JSON object: {"value": "cutoff-string"}
+Example: {"value": "184.56"}
+"""
+        else:
+            prompt = f"Independently inspect the handwritten {field_type} field in this image and return JSON: {{\"value\": \"extracted-value\"}}"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_crop}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.1,
+            "max_tokens": 512
+        }
+
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(self.endpoint_url, headers=headers, json=payload)
+                resp.raise_for_status()
+                content_str = resp.json()["choices"][0]["message"]["content"]
+                if "```json" in content_str:
+                    content_str = content_str.split("```json")[1].split("```")[0].strip()
+                elif "```" in content_str:
+                    content_str = content_str.split("```")[1].split("```")[0].strip()
+                parsed = json.loads(content_str)
+                latency = (time.time() - start_time) * 1000.0
+                return parsed.get("value"), latency
+        except Exception as e:
+            print(f"[QWEN CROP EXTRACTION FAILED] {field_type}: {e}")
+            return None, (time.time() - start_time) * 1000.0

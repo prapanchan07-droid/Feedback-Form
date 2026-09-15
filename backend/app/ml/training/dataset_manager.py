@@ -28,11 +28,18 @@ class DatasetManager:
                 for row in reader:
                     img_path = os.path.join(self.dataset_dir, row["image_path"]) if not os.path.isabs(row["image_path"]) else row["image_path"]
                     if os.path.exists(img_path):
+                        w_id = row.get("writer_id", f"unknown_writer_{len(samples)}")
+                        orig_f = row.get("original_form", f"{w_id}.jpeg")
+                        f_id = row.get("form_id", os.path.splitext(orig_f)[0] if orig_f else w_id)
+                        pos_val = int(row["position"]) if "position" in row and row["position"].isdigit() else ((len(samples) % 10) + 1)
                         samples.append({
                             "image_path": img_path,
                             "label": int(row["label"]),
-                            "writer_id": row.get("writer_id", f"unknown_writer_{len(samples)}"),
-                            "source": row.get("source", "custom")
+                            "writer_id": w_id,
+                            "form_id": f_id,
+                            "digit_position": pos_val,
+                            "source": row.get("source", "real_handwriting"),
+                            "original_form_filename": orig_f
                         })
         else:
             # Fallback to subfolder structure (0/ to 9/)
@@ -88,15 +95,25 @@ class DatasetManager:
         random.seed(42)
         random.shuffle(writers)
 
+        # Strict disjoint split allocation
         n_total = len(writers)
+        if n_total < 3:
+            reliability_notice = "INSUFFICIENT WRITERS FOR RELIABLE GENERALIZATION EVALUATION"
+        else:
+            reliability_notice = "STATISTICALLY RELIABLE" if n_total >= 10 else "INSUFFICIENT WRITERS FOR RELIABLE GENERALIZATION EVALUATION"
+
         n_train = max(1, int(n_total * train_ratio))
-        n_val = max(1, int(n_total * val_ratio))
+        n_val = max(1, int(n_total * val_ratio)) if n_total >= 3 else 0
+        n_test = n_total - n_train - n_val
 
         train_writers = set(writers[:n_train])
-        val_writers = set(writers[n_train:n_train + n_val])
-        test_writers = set(writers[n_train + n_val:])
-        if not test_writers and writers:
-            test_writers = val_writers  # Fallback if very few writers exist
+        val_writers = set(writers[n_train:n_train + n_val]) if n_val > 0 else set()
+        test_writers = set(writers[n_train + n_val:]) if n_test > 0 else set()
+
+        # Hard assertion: Zero writer overlap across splits
+        assert len(train_writers & val_writers) == 0, "Data leakage detected: train and val share writers"
+        assert len(train_writers & test_writers) == 0, "Data leakage detected: train and test share writers"
+        assert len(val_writers & test_writers) == 0, "Data leakage detected: val and test share writers"
 
         train_samples, val_samples, test_samples = [], [], []
 
@@ -105,19 +122,22 @@ class DatasetManager:
                 train_samples.extend(sample_list)
             elif w in val_writers:
                 val_samples.extend(sample_list)
-            else:
+            elif w in test_writers:
                 test_samples.extend(sample_list)
 
         return {
             "train": train_samples,
             "val": val_samples,
             "test": test_samples,
+            "reliability_notice": reliability_notice,
             "split_summary": {
-                "train_writers": len(train_writers),
-                "val_writers": len(val_writers),
-                "test_writers": len(test_writers),
-                "train_samples": len(train_samples),
-                "val_samples": len(val_samples),
-                "test_samples": len(test_samples)
+                "total_writers": n_total,
+                "train_writers": sorted(list(train_writers)),
+                "val_writers": sorted(list(val_writers)),
+                "test_writers": sorted(list(test_writers)),
+                "train_samples_count": len(train_samples),
+                "val_samples_count": len(val_samples),
+                "test_samples_count": len(test_samples),
+                "reliability_notice": reliability_notice
             }
         }

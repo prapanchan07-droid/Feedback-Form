@@ -46,3 +46,6 @@ test_*.png
 # OS
 .DS_Store
 Thumbs.db
+real_digit_dataset/
+scratch/
+cnn_dataset/

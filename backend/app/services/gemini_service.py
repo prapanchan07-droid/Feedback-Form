@@ -26,6 +26,14 @@ class GeminiVisionService:
                 except Exception as e:
                     print(f"[GeminiVisionService] Google GenAI SDK init warning: {e}")
 
+    def extract_field_crop(self, crop_image: np.ndarray, field_type: str) -> Tuple[Optional[str], float]:
+        """
+        Submits field crop image for independent second-pass verification.
+        """
+        if self.qwen_service:
+            return self.qwen_service.extract_field_crop(crop_image, field_type)
+        return None, 0.0
+
     def extract_form_fields(self, image: np.ndarray) -> Tuple[Dict[str, Any], float]:
         """
         Submits image to Vision API (Qwen or Gemini).

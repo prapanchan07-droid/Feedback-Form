@@ -2,6 +2,7 @@ import os
 import cv2
 import json
 import datetime
+import numpy as np
 from sqlalchemy.orm import Session
 
 from backend.app.workers.celery_app import celery_app
@@ -9,19 +10,50 @@ from backend.app.db.session import SessionLocal
 from backend.app.models.domain import (
     Document, Page, ExtractionJob, FieldExtraction, GeminiResult, CNNResult, VerificationDecision
 )
+from backend.app.services.scratch_manager import ScratchManager
 from backend.app.services.preprocessing import ImagePreprocessor
 from backend.app.services.alignment import FormAligner
 from backend.app.services.roi_extractor import ROIExtractor
+from backend.app.services.ocr_service import OCRService
 from backend.app.services.gemini_service import GeminiVisionService
-from backend.app.ml.inference.cnn_service import CNNInferenceService
-from backend.app.decision_engine.comparator import DecisionEngine
+from backend.app.decision_engine.field_reconciler import FieldReconciler
 from backend.app.validation.validator import FieldValidator
+
+TEMPLATE_TO_SCHEMA_MAP = {
+    "student_name": "student_name",
+    "school_name": "school_name",
+    "date": "date",
+    "student_mobile": "student_mobile_number",
+    "parent_mobile": "parent_mobile_number",
+    "email": "email",
+    "cutoff_marks": "cut_off_marks"
+}
+
+ALL_SCHEMA_FIELDS = [
+    "student_name",
+    "school_name",
+    "date",
+    "student_mobile_number",
+    "parent_mobile_number",
+    "email",
+    "cut_off_marks",
+    "interested_in_bit",
+    "career_guidance_usefulness",
+    "speaker_effectiveness",
+    "interested_in_choice_filling_assistance"
+]
 
 def process_document_pipeline_sync(job_id: str, document_id: int):
     """
-    Synchronous pipeline runner.
-    Processes pages independently with validated homography, safe letterboxing fallback,
-    high-res RGB vision extraction, diagnostic logging, and 6 debug stage image outputs.
+    Synchronous hybrid extraction pipeline runner:
+    1. Prepares job-isolated scratch paths under scratch/<job_id>/
+    2. Orientation & form alignment
+    3. Multi-variant preprocessing (safeguarding thin handwriting strokes)
+    4. Independent Multi-Variant OCR Extraction & Multi-Variant Consensus Aggregation
+    5. Independent Qwen VLM Vision Extraction
+    6. Field-Level Evidence Reconciliation & Scoring Engine (Qwen VLM + Multi-Variant OCR)
+    7. Targeted Second-Pass Crop Verification (generated ONLY when required for unreadable/conflicted fields)
+    8. Database persistence of rich provenances & detailed decision rationale
     """
     db: Session = SessionLocal()
     try:
@@ -30,7 +62,10 @@ def process_document_pipeline_sync(job_id: str, document_id: int):
         if not job or not doc:
             return
 
-        print(f"[EXTRACTION JOB STARTED] job_id={job_id} | document_id={doc.id} | file={doc.filename}")
+        print(f"[HYBRID PIPELINE STARTED] job_id={job_id} | document_id={doc.id} | file={doc.filename}")
+
+        # Reset any top-level stale scratch
+        ScratchManager.reset_stale_scratch()
 
         job.status = "RUNNING"
         job.stage = "PREPROCESSING"
@@ -39,8 +74,8 @@ def process_document_pipeline_sync(job_id: str, document_id: int):
 
         aligner = FormAligner()
         roi_extractor = ROIExtractor()
+        ocr_service = OCRService()
         vision_service = GeminiVisionService()
-        cnn_service = CNNInferenceService()
 
         pages = db.query(Page).filter(Page.document_id == doc.id).order_by(Page.page_number).all()
         success_count = 0
@@ -54,12 +89,13 @@ def process_document_pipeline_sync(job_id: str, document_id: int):
 
                 print(f"[PAGE PROCESSING] page_id={page.id} | page_number={page.page_number} | original_file={page.original_image_path}")
 
-                # 1. Load image & apply EXIF orientation fix exactly once
+                # 1. Load image & apply EXIF orientation fix
                 with open(page.original_image_path, "rb") as f:
                     file_bytes = f.read()
                 img_exif_fixed = ImagePreprocessor.load_and_fix_exif(file_bytes)
+                ScratchManager.save_image(job_id, "original", f"page_{page.id}_original.png", img_exif_fixed)
 
-                # 2. Optional deskew
+                # 2. Deskew
                 gray_exif = cv2.cvtColor(img_exif_fixed, cv2.COLOR_BGR2GRAY)
                 deskewed_gray, skew_angle = ImagePreprocessor.deskew_image(gray_exif)
                 if abs(skew_angle) > 0.5:
@@ -69,149 +105,128 @@ def process_document_pipeline_sync(job_id: str, document_id: int):
                 else:
                     img_deskewed = img_exif_fixed.copy()
 
-                # 3. Alignment & Preprocessing with Validation
+                # 3. Alignment & Homography
                 aligned, H, is_warped = aligner.align(img_deskewed)
 
-                # Save aligned/final preprocessed image
+                # Save aligned image
                 aligned_path = page.original_image_path.replace(".png", "_aligned.png").replace(".jpg", "_aligned.png")
                 cv2.imwrite(aligned_path, aligned)
                 page.aligned_image_path = aligned_path
 
-                # 4. Save 6 Preprocessing Debug Stages
-                debug_dir = os.path.join(os.path.dirname(page.original_image_path), f"page_{page.id}_debug")
+                # 4. Multi-Variant Preprocessing (Safeguards thin handwriting strokes)
+                variants = ImagePreprocessor.generate_variants(aligned)
+                for v_name, v_img in variants.items():
+                    if v_img is not None:
+                        ScratchManager.save_image(job_id, "variants", f"page_{page.id}_variant_{v_name}.png", v_img)
+
+                # Save ROI overlay debug stage to debug/
                 roi_overlay = ImagePreprocessor.draw_roi_overlay(aligned)
+                ScratchManager.save_image(job_id, "debug", f"page_{page.id}_roi_overlay.png", roi_overlay)
 
-                stages_dict = {
-                    "01_original": cv2.imread(page.original_image_path),
-                    "02_orientation_corrected": img_exif_fixed,
-                    "03_deskewed": img_deskewed,
-                    "04_perspective_corrected": aligned if is_warped else None,
-                    "05_final_preprocessed": aligned,
-                    "06_ROI_overlay": roi_overlay
-                }
-                ImagePreprocessor.save_debug_stages(debug_dir, stages_dict)
+                # 5. Independent Multi-Variant OCR Subsystem
+                job.stage = "MULTI_VARIANT_OCR"
+                db.commit()
+                print(f"[OCR SERVICE START] Running multi-variant OCR across fields for page_id={page.id}...")
+                ocr_results = ocr_service.run_multi_variant_ocr(variants)
+                
+                # Save OCR raw consensus log to scratch
+                with open(os.path.join(ScratchManager.get_job_dir(job_id, "ocr"), f"page_{page.id}_ocr_results.json"), "w") as f:
+                    json.dump(ocr_results, f, indent=2)
 
-                # 5. Crop ROIs
-                rois = roi_extractor.crop_rois(aligned)
-
-                # 6. Vision Extraction (Qwen / Gemini on high-quality RGB preprocessed image)
+                # 6. Independent Qwen VLM Vision Extraction
                 job.stage = "VISION_EXTRACTION"
                 db.commit()
-                
-                print(f"[VISION EXTRACTION START] job_id={job_id} | page_id={page.id} | provider={vision_service.qwen_service.__class__.__name__ if vision_service.qwen_service else 'GeminiVisionService'}")
-                
-                vision_data, vision_latency = vision_service.extract_form_fields(aligned)
+                print(f"[QWEN VLM START] Submitting page_id={page.id} to Qwen Vision API...")
+                qwen_data, vision_latency = vision_service.extract_form_fields(aligned)
+                print(f"[QWEN VLM SUCCESS] Latency={vision_latency:.2f} ms")
 
-                print(f"[VISION EXTRACTION SUCCESS] job_id={job_id} | page_id={page.id} | latency={vision_latency:.2f} ms")
-
-                g_res = GeminiResult(
+                db.add(GeminiResult(
                     page_id=page.id,
-                    raw_json=json.dumps(vision_data),
+                    raw_json=json.dumps(qwen_data),
                     model_name=getattr(vision_service.qwen_service, 'model_name', vision_service.model_name),
                     latency_ms=vision_latency
-                )
-                db.add(g_res)
-
-                # 7. CNN Inference (Optional non-blocking verification for phone + cutoff)
-                job.stage = "CNN_EXTRACTION"
-                db.commit()
-                mob_crops = rois.get("student_mobile", {}).get("boxes", [])
-                cnn_mob_res = cnn_service.predict_phone_number(mob_crops)
-
-                db.add(CNNResult(
-                    page_id=page.id,
-                    field_name="student_mobile",
-                    value=cnn_mob_res.get("value"),
-                    per_character_results=cnn_mob_res.get("per_character_results"),
-                    confidence=cnn_mob_res.get("confidence"),
-                    latency_ms=cnn_mob_res.get("latency_ms")
                 ))
 
-                cutoff_crops = rois.get("cutoff_marks", {})
-                cnn_cutoff_res = cnn_service.predict_cutoff_marks(cutoff_crops)
-
-                db.add(CNNResult(
-                    page_id=page.id,
-                    field_name="cutoff_marks",
-                    value=cnn_cutoff_res.get("value"),
-                    per_character_results=cnn_cutoff_res.get("per_character_results"),
-                    confidence=cnn_cutoff_res.get("confidence"),
-                    latency_ms=cnn_cutoff_res.get("latency_ms")
-                ))
-
-                # 8. Decision Engine & Validation
-                job.stage = "COMPARING_AND_VALIDATING"
+                # 7. Field-Level Comparison & Intelligent Evidence Reconciliation
+                job.stage = "FIELD_RECONCILIATION"
                 db.commit()
 
-                # Phone Decision
-                mob_dec = DecisionEngine.evaluate_phone_number(
-                    vision_data.get("student_mobile_number"), cnn_mob_res
-                )
-                db.add(VerificationDecision(
-                    page_id=page.id,
-                    field_name="student_mobile_number",
-                    gemini_value=mob_dec["gemini_value"],
-                    cnn_value=mob_dec["cnn_value"],
-                    final_value=mob_dec["final_value"],
-                    decision=mob_dec["decision"],
-                    confidence=mob_dec["confidence"],
-                    reason=mob_dec["reason"]
-                ))
-                db.add(FieldExtraction(
-                    page_id=page.id,
-                    field_name="student_mobile_number",
-                    raw_value=vision_data.get("student_mobile_number"),
-                    normalized_value=mob_dec["final_value"],
-                    source="decision_engine",
-                    confidence=mob_dec["confidence"],
-                    status="VERIFIED" if mob_dec["decision"] == "AGREEMENT" else "CONFLICT"
-                ))
+                # Pre-crop ROIs dictionary in case targeted crop is required
+                rois = roi_extractor.crop_rois(aligned)
 
-                # Cutoff Decision
-                cutoff_dec = DecisionEngine.evaluate_cutoff_marks(
-                    vision_data.get("cut_off_marks"), cnn_cutoff_res
-                )
-                db.add(VerificationDecision(
-                    page_id=page.id,
-                    field_name="cut_off_marks",
-                    gemini_value=cutoff_dec["gemini_value"],
-                    cnn_value=cutoff_dec["cnn_value"],
-                    final_value=cutoff_dec["final_value"],
-                    decision=cutoff_dec["decision"],
-                    confidence=cutoff_dec["confidence"],
-                    reason=cutoff_dec["reason"]
-                ))
-                db.add(FieldExtraction(
-                    page_id=page.id,
-                    field_name="cut_off_marks",
-                    raw_value=vision_data.get("cut_off_marks"),
-                    normalized_value=cutoff_dec["final_value"],
-                    source="decision_engine",
-                    confidence=cutoff_dec["confidence"],
-                    status="VERIFIED" if cutoff_dec["decision"] == "AGREEMENT" else "CONFLICT"
-                ))
+                reconciled_results = {}
+                for schema_field in ALL_SCHEMA_FIELDS:
+                    # Find corresponding template field name
+                    tmpl_field = None
+                    for t_name, s_name in TEMPLATE_TO_SCHEMA_MAP.items():
+                        if s_name == schema_field:
+                            tmpl_field = t_name
+                            break
 
-                # Store remaining Vision fields for CURRENT page
-                for fname, val in vision_data.items():
-                    if fname not in ("student_mobile_number", "cut_off_marks"):
-                        db.add(FieldExtraction(
-                            page_id=page.id,
-                            field_name=fname,
-                            raw_value=str(val) if val is not None else "",
-                            normalized_value=str(val) if val is not None else "",
-                            source="vision_model",
-                            confidence=0.85,
-                            status="EXTRACTED"
-                        ))
+                    ocr_res = ocr_results.get(tmpl_field) if tmpl_field else None
+                    qwen_val = qwen_data.get(schema_field)
+
+                    # Reconcile field evidence
+                    rec = FieldReconciler.reconcile_field(schema_field, qwen_val, ocr_res)
+
+                    # 8. Targeted Second-Pass Crop Verification (ONLY when required for low confidence/conflicts)
+                    if schema_field in ("student_mobile_number", "cut_off_marks") and rec["status"] in ("CONFLICT", "VLM_SELECTED", "OCR_OVERRIDE") and rec["final_confidence"] < 0.95:
+                        crop_dict = rois.get(tmpl_field, {})
+                        crop_img = crop_dict.get("crop") if "crop" in crop_dict else None
+                        
+                        if crop_img is None and "boxes" in crop_dict and crop_dict["boxes"]:
+                            # Stitch box crops if line crop not directly available
+                            crops = [b["crop"] for b in crop_dict["boxes"] if b.get("crop") is not None]
+                            if crops:
+                                crop_img = np.hstack(crops)
+
+                        if crop_img is not None and crop_img.size > 0:
+                            # Save targeted field crop ONLY when required
+                            crop_filename = f"crop_{schema_field}_p{page.id}.png"
+                            crop_path = ScratchManager.save_image(job_id, "crops", crop_filename, crop_img)
+                            print(f"[TARGETED CROP GENERATED] Saved required crop: {crop_path}")
+
+                            pass2_val, _ = vision_service.extract_field_crop(crop_img, schema_field)
+                            if pass2_val:
+                                pass2_rec = FieldReconciler.reconcile_field(schema_field, pass2_val, ocr_res)
+                                if pass2_rec["final_confidence"] > rec["final_confidence"]:
+                                    rec = pass2_rec
+                                    rec["reasoning"] += " (Verified via targeted second-pass field crop inspection)."
+
+                    reconciled_results[schema_field] = rec
+
+                    # Store in FieldExtraction DB table
+                    db.add(FieldExtraction(
+                        page_id=page.id,
+                        field_name=schema_field,
+                        raw_value=str(qwen_val) if qwen_val is not None else (ocr_res.get("consensus_text") if ocr_res else ""),
+                        normalized_value=rec["final_value"],
+                        source=rec["source"],
+                        confidence=rec["final_confidence"],
+                        status=rec["status"]
+                    ))
+
+                    # Store in VerificationDecision DB table
+                    db.add(VerificationDecision(
+                        page_id=page.id,
+                        field_name=schema_field,
+                        gemini_value=str(qwen_val) if qwen_val is not None else None,
+                        cnn_value=ocr_res.get("consensus_text") if ocr_res else None,
+                        final_value=rec["final_value"],
+                        decision=rec["status"],
+                        confidence=rec["final_confidence"],
+                        reason=rec["reasoning"]
+                    ))
 
                 page.status = "COMPLETED"
                 success_count += 1
-                print(f"[EXTRACTION JOB COMPLETED] page_id={page.id} | status=COMPLETED")
+                print(f"[PAGE COMPLETED] page_id={page.id} | Reconciled fields: {len(reconciled_results)}")
+
             except Exception as e:
                 page.status = "FAILED"
                 page.error_message = str(e)
                 failed_count += 1
-                print(f"[EXTRACTION JOB FAILED] page_id={page.id} | error={e}")
+                print(f"[PAGE EXTRACTION FAILED] page_id={page.id} | error={e}")
 
             db.commit()
 
@@ -229,6 +244,8 @@ def process_document_pipeline_sync(job_id: str, document_id: int):
 
         doc.completed_at = datetime.datetime.utcnow()
         db.commit()
+        print(f"[JOB COMPLETED] job_id={job_id} | status={job.status}")
+
     finally:
         db.close()
 

@@ -57,3 +57,11 @@ def test_cutoff_decision_engine_agreement():
     res = DecisionEngine.evaluate_cutoff_marks(gemini_cutoff, cnn_cutoff_res)
     assert res["decision"] == "AGREEMENT"
     assert res["final_value"] == "184.56"
+
+def test_case_9_localization_failed_triggers_manual_review():
+    gemini_val = "9432164321"
+    cnn_res = {"value": None, "confidence": 0.0, "status": "LOCALIZATION_FAILED"}
+    res = DecisionEngine.evaluate_phone_number(gemini_val, cnn_res)
+    assert res["decision"] == "MANUAL_REVIEW_REQUIRED"
+    assert "localization failed" in res["reason"].lower()
+

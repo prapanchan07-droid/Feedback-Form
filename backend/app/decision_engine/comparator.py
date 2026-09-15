@@ -19,6 +19,17 @@ class DecisionEngine:
         # 1. Normalize Gemini and CNN strings
         g_valid, g_norm, g_err = FieldValidator.validate_phone_number(gemini_val)
         
+        if cnn_status == "LOCALIZATION_FAILED":
+            return {
+                "final_value": g_norm if g_valid else (gemini_val or ""),
+                "gemini_value": gemini_val,
+                "cnn_value": None,
+                "decision": "MANUAL_REVIEW_REQUIRED",
+                "confidence": 0.50,
+                "reason": "Student Mobile field localization failed to detect or validate 10 bounding boxes (CNN recognition was not evaluated).",
+                "differing_positions": []
+            }
+
         if cnn_status == "CNN_UNAVAILABLE":
             final_val = g_norm if g_valid else (gemini_val or "")
             conf = 0.85 if g_valid else 0.40

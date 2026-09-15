@@ -84,10 +84,10 @@ class CNNModelTrainer:
         splits = dm.create_writer_independent_splits()
         
         train_ds = DigitImageDataset(splits["train"], transform=self.train_transform)
-        val_ds = DigitImageDataset(splits["val"], transform=self.val_transform)
+        val_ds = DigitImageDataset(splits["val"], transform=self.val_transform) if splits["val"] else None
 
         train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False)
+        val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False) if val_ds else None
 
         model = ResNet18DigitModel(num_classes=10, pretrained=True).to(self.device)
         criterion = nn.CrossEntropyLoss()
@@ -110,36 +110,42 @@ class CNNModelTrainer:
 
             avg_train_loss = total_train_loss / max(1, len(train_loader))
 
-            model.eval()
-            total_val_loss = 0.0
-            correct = 0
-            total = 0
-            with torch.no_grad():
-                for imgs, labels in val_loader:
-                    imgs, labels = imgs.to(self.device), labels.to(self.device)
-                    outputs = model(imgs)
-                    loss = criterion(outputs, labels)
-                    total_val_loss += loss.item()
+            if val_loader:
+                model.eval()
+                total_val_loss = 0.0
+                correct = 0
+                total = 0
+                with torch.no_grad():
+                    for imgs, labels in val_loader:
+                        imgs, labels = imgs.to(self.device), labels.to(self.device)
+                        outputs = model(imgs)
+                        loss = criterion(outputs, labels)
+                        total_val_loss += loss.item()
 
-                    preds = torch.argmax(outputs, dim=1)
-                    correct += (preds == labels).sum().item()
-                    total += labels.size(0)
+                        preds = torch.argmax(outputs, dim=1)
+                        correct += (preds == labels).sum().item()
+                        total += labels.size(0)
 
-            avg_val_loss = total_val_loss / max(1, len(val_loader))
-            val_acc = correct / max(1, total)
+                avg_val_loss = total_val_loss / max(1, len(val_loader))
+                val_acc = correct / max(1, total)
 
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
-                patience_counter = 0
-                torch.save(model.state_dict(), self.output_model_path)
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    patience_counter = 0
+                    torch.save(model.state_dict(), self.output_model_path)
+                else:
+                    patience_counter += 1
+                    if patience_counter >= self.patience:
+                        break
             else:
-                patience_counter += 1
-                if patience_counter >= self.patience:
-                    break
+                # Save model directly if no validation split exists
+                torch.save(model.state_dict(), self.output_model_path)
+                best_val_loss = 0.0
 
         return {
             "status": "COMPLETED",
             "best_val_loss": round(best_val_loss, 4),
             "output_model_path": self.output_model_path,
-            "split_summary": splits["split_summary"]
+            "split_summary": splits["split_summary"],
+            "reliability_notice": splits.get("reliability_notice", "INSUFFICIENT WRITERS FOR RELIABLE GENERALIZATION EVALUATION")
         }

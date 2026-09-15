@@ -83,6 +83,48 @@ class AccuracyEvaluator:
         ]
         return dataset
 
+    @staticmethod
+    def classify_error(field_name: str, expected: Any, predicted: Any) -> Dict[str, Any]:
+        """
+        Classifies error types and position-level digit confusion (e.g. 3 -> 8, 5 -> 6).
+        """
+        if predicted is None or str(predicted).strip() == "":
+            return {"error_type": "MISSING_VALUE", "details": "Prediction is empty/null"}
+
+        if field_name in ("student_mobile_number", "parent_mobile_number"):
+            exp_digits = str(expected).strip()
+            pred_digits = str(predicted).strip()
+
+            if len(pred_digits) != len(exp_digits):
+                return {
+                    "error_type": "DIGIT_COUNT_MISMATCH",
+                    "details": f"Expected {len(exp_digits)} digits, got {len(pred_digits)}"
+                }
+
+            confusions = []
+            for idx, (e_char, p_char) in enumerate(zip(exp_digits, pred_digits)):
+                if e_char != p_char:
+                    confusions.append({
+                        "position": idx + 1,
+                        "expected_char": e_char,
+                        "predicted_char": p_char,
+                        "pattern": f"{e_char} -> {p_char}"
+                    })
+
+            return {
+                "error_type": "DIGIT_CONFUSION",
+                "digit_confusions": confusions
+            }
+
+        elif field_name == "cut_off_marks":
+            exp_str = str(expected).strip()
+            pred_str = str(predicted).strip()
+            if "." in exp_str and "." not in pred_str:
+                return {"error_type": "DECIMAL_MISSING", "details": "Decimal point was dropped"}
+            return {"error_type": "CUTOFF_VALUE_MISMATCH", "details": f"{exp_str} != {pred_str}"}
+
+        return {"error_type": "FIELD_VALUE_MISMATCH", "details": f"{expected} != {predicted}"}
+
     def evaluate_pipeline(self, dataset: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Evaluates extraction accuracy against ground truth.
@@ -165,6 +207,15 @@ class AccuracyEvaluator:
 
                 if is_correct:
                     correct_fields += 1
+                else:
+                    classification = AccuracyEvaluator.classify_error(field_name, expected_val, extracted.get(field_name))
+                    error_logs.append({
+                        "sample_id": sample_id,
+                        "field": field_name,
+                        "expected": expected_val,
+                        "predicted": extracted.get(field_name),
+                        "classification": classification
+                    })
 
         field_accuracy = (correct_fields / max(1, total_fields)) * 100.0
         mobile_accuracy = (mobile_exact_matches / max(1, mobile_total)) * 100.0

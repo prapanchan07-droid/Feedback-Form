@@ -93,38 +93,94 @@ fields:
         normalized_bbox: [0.814, 0.353, 0.852, 0.387]
 
   date:
-    type: "text_region"
-    normalized_bbox: [0.080, 0.100, 0.450, 0.135]
+    type: "character_boxes"
+    count: 8
+    normalized_bbox: [0.080, 0.100, 0.320, 0.135]
+    boxes:
+      - index: 0
+        type: "digit"
+        label: "day_1"
+        normalized_bbox: [0.080, 0.100, 0.105, 0.135]
+      - index: 1
+        type: "digit"
+        label: "day_2"
+        normalized_bbox: [0.110, 0.100, 0.135, 0.135]
+      - index: 2
+        type: "digit"
+        label: "month_1"
+        normalized_bbox: [0.150, 0.100, 0.175, 0.135]
+      - index: 3
+        type: "digit"
+        label: "month_2"
+        normalized_bbox: [0.180, 0.100, 0.205, 0.135]
+      - index: 4
+        type: "digit"
+        label: "year_1"
+        normalized_bbox: [0.220, 0.100, 0.245, 0.135]
+      - index: 5
+        type: "digit"
+        label: "year_2"
+        normalized_bbox: [0.250, 0.100, 0.275, 0.135]
+      - index: 6
+        type: "digit"
+        label: "year_3"
+        normalized_bbox: [0.280, 0.100, 0.305, 0.135]
+      - index: 7
+        type: "digit"
+        label: "year_4"
+        normalized_bbox: [0.310, 0.100, 0.335, 0.135]
 
   student_mobile:
     type: "character_boxes"
     count: 10
-    normalized_bbox: [0.080, 0.142, 0.578, 0.182]
+    normalized_bbox: [0.0586, 0.3374, 0.3164, 0.3872]
     boxes:
       - index: 0
-        normalized_bbox: [0.080, 0.142, 0.124, 0.182]
+        normalized_bbox: [0.0586, 0.3374, 0.0844, 0.3872]
       - index: 1
-        normalized_bbox: [0.131, 0.142, 0.175, 0.182]
+        normalized_bbox: [0.0844, 0.3374, 0.1102, 0.3872]
       - index: 2
-        normalized_bbox: [0.181, 0.142, 0.225, 0.182]
+        normalized_bbox: [0.1102, 0.3374, 0.1359, 0.3872]
       - index: 3
-        normalized_bbox: [0.231, 0.142, 0.275, 0.182]
+        normalized_bbox: [0.1359, 0.3374, 0.1617, 0.3872]
       - index: 4
-        normalized_bbox: [0.282, 0.142, 0.326, 0.182]
+        normalized_bbox: [0.1617, 0.3374, 0.1875, 0.3872]
       - index: 5
-        normalized_bbox: [0.332, 0.142, 0.376, 0.182]
+        normalized_bbox: [0.1875, 0.3374, 0.2133, 0.3872]
       - index: 6
-        normalized_bbox: [0.383, 0.142, 0.427, 0.182]
+        normalized_bbox: [0.2133, 0.3374, 0.2391, 0.3872]
       - index: 7
-        normalized_bbox: [0.433, 0.142, 0.477, 0.182]
+        normalized_bbox: [0.2391, 0.3374, 0.2648, 0.3872]
       - index: 8
-        normalized_bbox: [0.484, 0.142, 0.528, 0.182]
+        normalized_bbox: [0.2648, 0.3374, 0.2906, 0.3872]
       - index: 9
-        normalized_bbox: [0.534, 0.142, 0.578, 0.182]
+        normalized_bbox: [0.2906, 0.3374, 0.3164, 0.3872]
 
   parent_mobile:
-    type: "text_region"
-    normalized_bbox: [0.080, 0.185, 0.578, 0.210]
+    type: "character_boxes"
+    count: 10
+    normalized_bbox: [0.520, 0.142, 0.920, 0.182]
+    boxes:
+      - index: 0
+        normalized_bbox: [0.520, 0.142, 0.555, 0.182]
+      - index: 1
+        normalized_bbox: [0.560, 0.142, 0.595, 0.182]
+      - index: 2
+        normalized_bbox: [0.600, 0.142, 0.635, 0.182]
+      - index: 3
+        normalized_bbox: [0.640, 0.142, 0.675, 0.182]
+      - index: 4
+        normalized_bbox: [0.680, 0.142, 0.715, 0.182]
+      - index: 5
+        normalized_bbox: [0.720, 0.142, 0.755, 0.182]
+      - index: 6
+        normalized_bbox: [0.760, 0.142, 0.795, 0.182]
+      - index: 7
+        normalized_bbox: [0.800, 0.142, 0.835, 0.182]
+      - index: 8
+        normalized_bbox: [0.840, 0.142, 0.875, 0.182]
+      - index: 9
+        normalized_bbox: [0.880, 0.142, 0.915, 0.182]
 
   email:
     type: "text_region"
