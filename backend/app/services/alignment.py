@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 from typing import Tuple, Dict, Any, Optional
@@ -9,8 +10,11 @@ class FormAligner:
         canvas_cfg = self.config.get("canvas", {"width": 2479, "height": 3508})
         self.canvas_width = canvas_cfg.get("width", 2479)
         self.canvas_height = canvas_cfg.get("height", 3508)
+        self.reference_template_path = "bannari_amman_form_template.png"
+        self.ref_image = None
+        if os.path.exists(self.reference_template_path):
+            self.ref_image = cv2.imread(self.reference_template_path)
 
-        # Target registration markers in template space
         reg = self.config.get("registration_markers", {})
         if reg:
             tl = reg["top_left"]
@@ -48,32 +52,26 @@ class FormAligner:
             ], dtype=np.float32)
 
     def is_valid_homography(self, H: np.ndarray, src_pts: np.ndarray, dst_pts: np.ndarray) -> bool:
-        """
-        Validates homography matrix H to prevent destructive warping.
-        Checks determinant, scale change ratio, and corner ordering.
-        """
         if H is None or H.shape != (3, 3):
             return False
 
         det = np.linalg.det(H)
-        if det <= 0.01 or det > 100.0:
-            return False  # Degenerate or negative determinant
+        if det <= 0.001 or det > 1000.0:
+            return False
 
-        # Check transformed corners scale ratio
         try:
             pts_homo = np.hstack([src_pts, np.ones((4, 1))])
             transformed = (H @ pts_homo.T).T
             transformed = transformed[:, :2] / transformed[:, 2:]
 
-            # Compare widths and heights of src vs dst
             src_w = np.linalg.norm(src_pts[1] - src_pts[0])
             dst_w = np.linalg.norm(transformed[1] - transformed[0])
-            if src_w == 0 or not (0.4 <= (dst_w / src_w) <= 2.5):
+            if src_w == 0 or not (0.2 <= (dst_w / src_w) <= 4.0):
                 return False
 
             src_h = np.linalg.norm(src_pts[3] - src_pts[0])
             dst_h = np.linalg.norm(transformed[3] - transformed[0])
-            if src_h == 0 or not (0.4 <= (dst_h / src_h) <= 2.5):
+            if src_h == 0 or not (0.2 <= (dst_h / src_h) <= 4.0):
                 return False
 
             return True
@@ -81,9 +79,6 @@ class FormAligner:
             return False
 
     def detect_markers(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Detects registration corner markers. Returns None if markers cannot be located with high confidence.
-        """
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
@@ -111,7 +106,7 @@ class FormAligner:
                         candidates.append((cx, cy, area))
 
         if len(candidates) < 4:
-            return None  # Unreliable candidate count, reject marker warping
+            return None
 
         mid_x, mid_y = img_w / 2.0, img_h / 2.0
         quad_tl, quad_tr, quad_br, quad_bl = [], [], [], []
@@ -141,21 +136,53 @@ class FormAligner:
 
         return np.array([tl, tr, br, bl], dtype=np.float32)
 
+    def align_with_orb_features(self, image: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        Feature-based homography alignment against reference template using ORB keypoint matching.
+        """
+        if self.ref_image is None:
+            return None, None
+
+        try:
+            orb = cv2.ORB_create(3000)
+            kp1, des1 = orb.detectAndCompute(image, None)
+            kp2, des2 = orb.detectAndCompute(self.ref_image, None)
+
+            if des1 is None or des2 is None or len(des1) < 10 or len(des2) < 10:
+                return None, None
+
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = bf.match(des1, des2)
+            matches = sorted(matches, key=lambda x: x.distance)
+
+            if len(matches) < 15:
+                return None, None
+
+            top_matches = matches[:50]
+            src_pts = np.float32([kp1[m.queryIdx].pt for m in top_matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kp2[m.trainIdx].pt for m in top_matches]).reshape(-1, 1, 2)
+
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            if H is not None and H.shape == (3, 3):
+                warped = cv2.warpPerspective(image, H, (self.canvas_width, self.canvas_height))
+                return warped, H
+            return None, None
+        except Exception:
+            return None, None
+
     def letterbox_to_canvas(self, image: np.ndarray) -> np.ndarray:
-        """
-        Scales image to fit target template canvas (2479x3508) while strictly preserving aspect ratio.
-        Adds equal padding (letterboxing/pillarboxing).
-        """
+        if image is None or image.size == 0:
+            return np.full((self.canvas_height, self.canvas_width, 3), 255, dtype=np.uint8)
+
         img_h, img_w = image.shape[:2]
         target_w, target_h = self.canvas_width, self.canvas_height
 
-        scale = min(target_w / img_w, target_h / img_h)
-        new_w = int(img_w * scale)
-        new_h = int(img_h * scale)
+        scale = min(target_w / float(img_w), target_h / float(img_h))
+        new_w = max(1, int(round(img_w * scale)))
+        new_h = max(1, int(round(img_h * scale)))
 
         resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        # Create padded white canvas
         if len(image.shape) == 3:
             canvas = np.full((target_h, target_w, 3), 255, dtype=np.uint8)
         else:
@@ -170,8 +197,9 @@ class FormAligner:
     def align(self, image: np.ndarray) -> Tuple[np.ndarray, Optional[np.ndarray], bool]:
         """
         Aligns form image to template canvas (2479x3508).
-        Validates homography matrix. If invalid or unconfident, falls back to letterboxing to preserve geometry.
-        Returns (aligned_image, homography_matrix, is_warped_flag).
+        1. Tries 4-corner marker RANSAC perspective transformation.
+        2. Tries ORB feature matching homography alignment against reference template.
+        3. Fallback: Direct canvas resolution scaling (2479x3508).
         """
         try:
             src_pts = self.detect_markers(image)
@@ -181,9 +209,15 @@ class FormAligner:
                     warped = cv2.warpPerspective(image, H, (self.canvas_width, self.canvas_height))
                     return warped, H, True
 
-            # Safe Fallback: Letterbox to canvas without aspect ratio distortion
-            letterboxed = self.letterbox_to_canvas(image)
-            return letterboxed, None, False
+            # 2. Try ORB feature matching homography alignment
+            orb_warped, orb_H = self.align_with_orb_features(image)
+            if orb_warped is not None:
+                return orb_warped, orb_H, True
+
+            # 3. Fallback: Direct canvas resolution scaling
+            scaled = self.letterbox_to_canvas(image)
+            return scaled, None, False
         except Exception:
-            letterboxed = self.letterbox_to_canvas(image)
-            return letterboxed, None, False
+            scaled = self.letterbox_to_canvas(image)
+            return scaled, None, False
+

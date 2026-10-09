@@ -4,7 +4,7 @@ import datetime
 import io
 import csv
 from typing import List
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -19,9 +19,14 @@ UPLOAD_STORAGE_DIR = "./storage/uploads"
 os.makedirs(UPLOAD_STORAGE_DIR, exist_ok=True)
 
 @router.post("/upload", response_model=APIResponse)
-async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
     """
     Uploads a single image (PNG/JPEG) or multi-page PDF. Creates Document, Page, and Job records.
+    Dispatches pipeline execution as a background task to prevent proxy timeouts / ECONNRESET.
     """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     file_uuid = str(uuid.uuid4())[:8]
@@ -81,11 +86,8 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     db.add(job)
     db.commit()
 
-    # Execute pipeline synchronously (or dispatch to Celery)
-    try:
-        process_document_pipeline_sync(job_id, doc.id)
-    except Exception as e:
-        print(f"Pipeline execution error: {e}")
+    # Dispatch pipeline task asynchronously in background
+    background_tasks.add_task(process_document_pipeline_sync, job_id, doc.id)
 
     return APIResponse(data={
         "document_id": doc.id,
@@ -96,13 +98,17 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     })
 
 @router.post("/batch", response_model=APIResponse)
-async def upload_batch_documents(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+async def upload_batch_documents(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db)
+):
     """
     Handles batch upload of multiple images/PDFs.
     """
     results = []
     for file in files:
-        res = await upload_document(file, db)
+        res = await upload_document(background_tasks, file, db)
         results.append(res.data)
     return APIResponse(data={"batch_count": len(results), "documents": results})
 

@@ -34,7 +34,7 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({ pageResult, on
   return (
     <div className="bg-white shadow rounded-lg overflow-hidden border border-slate-200">
       <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-        <h3 className="text-sm font-bold text-slate-800">Gemini Vision vs CNN Verification Comparison Table</h3>
+        <h3 className="text-sm font-bold text-slate-800">Vision VLM vs Custom CNN Verification Table</h3>
         <span className="text-xs text-slate-500 font-mono">Page ID: {pageResult.page_id}</span>
       </div>
       <div className="overflow-x-auto">
@@ -42,8 +42,8 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({ pageResult, on
           <thead className="bg-slate-100 text-slate-600 font-semibold uppercase text-xs">
             <tr>
               <th className="px-4 py-2.5">Field Name</th>
-              <th className="px-4 py-2.5">Gemini Vision</th>
-              <th className="px-4 py-2.5">ResNet-18 CNN</th>
+              <th className="px-4 py-2.5">Vision VLM</th>
+              <th className="px-4 py-2.5">Custom CNN</th>
               <th className="px-4 py-2.5">Final Value</th>
               <th className="px-4 py-2.5">Confidence</th>
               <th className="px-4 py-2.5">Status</th>

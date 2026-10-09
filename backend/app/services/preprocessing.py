@@ -50,11 +50,13 @@ class ImagePreprocessor:
         """
         Generates multi-variant images optimized for OCR and vision while explicitly safeguarding thin handwriting strokes:
         - original: High-res BGR original
-        - grayscale: Standard grayscale
+        - grayscale: Standard 8-bit grayscale
         - enhanced: CLAHE contrast-enhanced grayscale
         - thresholded: Soft adaptive Gaussian thresholding (preserves thin pen strokes)
         - sharpened: Unsharp-mask sharpened image for faint lines
         - deskewed: Deskewed grayscale variant
+        - high_contrast: Contrast stretched grayscale (preserves faint handwriting ink)
+        - denoised: Bilateral filtered grayscale (removes paper noise while preserving stroke edges)
         """
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -65,18 +67,22 @@ class ImagePreprocessor:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
 
-        # 2. Soft Adaptive Thresholding (large block size to protect thin strokes)
-        denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+        # 2. Soft Adaptive Thresholding (large block size to protect thin handwriting strokes)
+        denoised = cv2.bilateralFilter(gray, 5, 50, 50)
         thresholded = cv2.adaptiveThreshold(
-            enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 4
+            enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 5
         )
 
         # 3. Sharpening via Unsharp Masking
         gaussian_blur = cv2.GaussianBlur(gray, (0, 0), 3.0)
-        sharpened = cv2.addWeighted(gray, 1.5, gaussian_blur, -0.5, 0)
+        sharpened = cv2.addWeighted(gray, 1.4, gaussian_blur, -0.4, 0)
 
         # 4. Deskewed variant
         deskewed_gray, _ = ImagePreprocessor.deskew_image(gray)
+
+        # 5. High-contrast percentile normalization
+        p2, p98 = np.percentile(gray, (2, 98))
+        high_contrast = np.clip((gray - p2) * (255.0 / max(1.0, p98 - p2)), 0, 255).astype(np.uint8)
 
         return {
             "original": image,
@@ -84,7 +90,9 @@ class ImagePreprocessor:
             "enhanced": enhanced,
             "thresholded": thresholded,
             "sharpened": sharpened,
-            "deskewed": deskewed_gray
+            "deskewed": deskewed_gray,
+            "high_contrast": high_contrast,
+            "denoised": denoised
         }
 
     @staticmethod

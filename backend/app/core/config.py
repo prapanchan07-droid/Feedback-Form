@@ -1,6 +1,12 @@
 import os
 import yaml
 try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+except ImportError:
+    pass
+
+try:
     from pydantic_settings import BaseSettings
 except ImportError:
     from pydantic_settings import BaseSettings

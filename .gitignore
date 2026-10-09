@@ -49,3 +49,9 @@ Thumbs.db
 real_digit_dataset/
 scratch/
 cnn_dataset/
+
+# Large CSV Datasets
+CNN/*.csv
+*.png
+!bannari_amman_form_template.png
+

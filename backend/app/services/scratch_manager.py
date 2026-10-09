@@ -37,7 +37,8 @@ class ScratchManager:
     @classmethod
     def reset_stale_scratch(cls):
         """
-        Deletes existing stale crop/scratch files if any exist at top level.
+        Deletes existing stale crop/scratch files if any exist at top level of scratch directory.
+        Prevents legacy/stale crops from interfering with new extraction jobs.
         """
         if os.path.exists(cls.BASE_SCRATCH_DIR):
             for item in os.listdir(cls.BASE_SCRATCH_DIR):
@@ -47,3 +48,31 @@ class ScratchManager:
                         os.remove(item_path)
                     except Exception:
                         pass
+                elif os.path.isdir(item_path) and item.startswith("legacy_"):
+                    try:
+                        shutil.rmtree(item_path)
+                    except Exception:
+                        pass
+
+    @classmethod
+    def clean_job_scratch(cls, job_id: str, keep_debug: bool = False):
+        """
+        Cleans up temporary job scratch files when extraction completes if keep_debug is False.
+        """
+        job_dir = os.path.join(cls.BASE_SCRATCH_DIR, str(job_id))
+        if not os.path.exists(job_dir):
+            return
+
+        if not keep_debug:
+            try:
+                shutil.rmtree(job_dir)
+            except Exception as e:
+                print(f"[ScratchManager] Warning cleaning job scratch {job_id}: {e}")
+        else:
+            # Clean only heavy temporary variants
+            variants_dir = os.path.join(job_dir, "variants")
+            if os.path.exists(variants_dir):
+                try:
+                    shutil.rmtree(variants_dir)
+                except Exception:
+                    pass

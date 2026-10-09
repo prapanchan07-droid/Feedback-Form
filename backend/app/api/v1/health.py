@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db
 from backend.app.core.config import settings
@@ -11,7 +12,7 @@ router = APIRouter(prefix="/health", tags=["health"])
 def health_check(db: Session = Depends(get_db)):
     db_ok = False
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db_ok = True
     except Exception:
         db_ok = False

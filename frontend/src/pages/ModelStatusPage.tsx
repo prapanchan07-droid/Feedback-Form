@@ -13,9 +13,9 @@ export const ModelStatusPage: React.FC = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">CNN Model & Verification Engine Status</h2>
+        <h2 className="text-2xl font-bold text-slate-900">Custom CNN Model & Verification Engine Status</h2>
         <p className="text-sm text-slate-500">
-          Independent PyTorch ResNet-18 Digit Classifier Configuration
+          Pluggable Custom CNN Digit Classifier Interface
         </p>
       </div>
 
@@ -26,12 +26,12 @@ export const ModelStatusPage: React.FC = () => {
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-900">
-              Architecture: <span className="font-mono text-blue-600">{status?.architecture || 'ResNet-18'}</span>
+              Architecture: <span className="font-mono text-blue-600">{status?.architecture || 'Custom CNN'}</span>
             </h3>
             <div className="flex items-center space-x-2 mt-1">
               <span className="text-xs text-slate-500">Weights File:</span>
               <span className="text-xs font-mono bg-slate-100 px-2 py-0.5 rounded">
-                {status?.weights_exist ? 'pretrained_resnet18.pth' : 'Weights Missing'}
+                {status?.weights_exist ? 'pretrained_model.pt (Custom Ready)' : 'Plug Custom CNN Weights'}
               </span>
             </div>
           </div>
@@ -42,9 +42,9 @@ export const ModelStatusPage: React.FC = () => {
           <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900 flex items-start space-x-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-bold text-sm">CNN Engine Active & Ready</h4>
+              <h4 className="font-bold text-sm">Custom CNN Engine Active & Ready</h4>
               <p className="text-xs text-emerald-800 mt-0.5">
-                ResNet-18 digit classification weights are loaded. Dual-engine verification is running.
+                Custom CNN classification interface is loaded and ready for custom model weights.
               </p>
             </div>
           </div>
@@ -52,10 +52,9 @@ export const ModelStatusPage: React.FC = () => {
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 flex items-start space-x-3">
             <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-bold text-sm">Model Not Trained (CNN Verification Unavailable)</h4>
+              <h4 className="font-bold text-sm">Custom CNN Ready for Training / Weights</h4>
               <p className="text-xs text-amber-800 mt-0.5">
-                The application starts cleanly in Untrained Mode. Gemini Vision extractions will run as primary.
-                Upload a digit dataset in the Model Training tab to train the ResNet-18 model.
+                The application starts cleanly with pluggable Custom CNN interface.
               </p>
             </div>
           </div>

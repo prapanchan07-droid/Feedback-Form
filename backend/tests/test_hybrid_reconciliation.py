@@ -88,3 +88,49 @@ def test_multi_variant_preprocessing():
     assert "thresholded" in variants
     assert "sharpened" in variants
     assert "deskewed" in variants
+    assert "high_contrast" in variants
+    assert "denoised" in variants
+
+def test_field_reconciler_ocr_typo_vlm_wins():
+    # VLM="Computer Science", OCR="Computer Scienc" -> VLM selected due to complete string
+    qwen_val = "Computer Science"
+    ocr_res = {
+        "consensus_text": "Computer Scienc",
+        "ocr_confidence": 0.72,
+        "variant_agreement": 0.50,
+        "status": "VALID"
+    }
+    rec = FieldReconciler.reconcile_field("school_name", qwen_val, ocr_res)
+    assert rec["final_value"] == "Computer Science"
+    assert rec["source"] in ("qwen_vlm", "ocr+vlm")
+
+def test_field_reconciler_date_ocr_override():
+    qwen_val = "2024"  # Incomplete / uncertain
+    ocr_res = {
+        "consensus_text": "15/09/2021",
+        "ocr_confidence": 0.95,
+        "variant_agreement": 1.0,
+        "status": "VALID"
+    }
+    rec = FieldReconciler.reconcile_field("date", qwen_val, ocr_res)
+    assert rec["status"] == "OCR_OVERRIDE"
+    assert rec["final_value"] == "15/09/2021"
+
+def test_crop_validation_and_on_demand_extraction():
+    from backend.app.services.roi_extractor import ROIExtractor
+    extractor = ROIExtractor()
+    canvas = np.zeros((1000, 800, 3), dtype=np.uint8)
+    cv2.rectangle(canvas, (50, 50), (300, 300), (255, 255, 255), -1)
+
+    crop, meta = extractor.crop_single_field(canvas, "student_mobile_number", page_num=1)
+    assert meta["field"] == "student_mobile_number"
+    assert meta["page"] == 1
+    assert "is_valid" in meta
+
+def test_map_bbox_norm_resolution_invariance():
+    # Test coordinate mapping across resolutions with matching aspect ratio allowing 1px rounding tolerance
+    x1_2k, y1_2k, x2_2k, y2_2k = ImagePreprocessor.map_bbox_norm((0.1, 0.2, 0.5, 0.6), 2560, 1808)
+    x1_1k, y1_1k, x2_1k, y2_1k = ImagePreprocessor.map_bbox_norm((0.1, 0.2, 0.5, 0.6), 1280, 904)
+    assert abs(x1_2k - 2 * x1_1k) <= 1
+    assert abs(y1_2k - 2 * y1_1k) <= 1
+
