@@ -47,24 +47,7 @@ import numpy as np
 #                confidence – float in [0, 1]
 # ══════════════════════════════════════════════════════════════════════════════
 
-def predict_digit(crop_28x28: np.ndarray) -> tuple[str, float]:
-    """
-    STUB – returns a random digit (or blank) with random confidence.
-    Replace with the real CNN inference call.
-
-    Example real implementation:
-        tensor = preprocess(crop_28x28)         # your normalisation
-        logits = model(tensor)
-        probs  = torch.softmax(logits, dim=-1)
-        conf, pred = probs.max(dim=-1)
-        digit = str(pred.item()) if conf > 0.35 else ""
-        return digit, conf.item()
-    """
-    if random.random() < 0.15:          # ~15 % blank boxes
-        return "", random.uniform(0.20, 0.55)
-    digit = str(random.randint(0, 9))
-    conf  = random.uniform(0.55, 0.99)
-    return digit, conf
+from digit_pipeline.predict_digit import predict_digit  # noqa: E402  ← real CNN adapter
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Layout constants (matches the form spec)
