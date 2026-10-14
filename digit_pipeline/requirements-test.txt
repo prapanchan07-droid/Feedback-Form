@@ -1,0 +1,60 @@
+# digit_pipeline/requirements-test.txt
+# ───────────────────────────────────────────────────────────────────────────────
+# Standalone dependencies for the digit adapter + evaluation suite.
+#
+# RECOMMENDED: install into the existing CNN/venv (Python 3.11.6, already has
+# TF 2.15.1 + numpy 1.26.4). Do NOT install into the backend venv.
+#
+# ── Compatibility matrix / conflict analysis ────────────────────────────────
+#
+# tensorflow==2.15.1          numpy >=1.23.5, <2.0        PINNED in this venv
+# opencv-python-headless      ≥4.9 requires numpy>=2       ⚠ CONFLICT
+#   → pin to 4.8.1.78  (last release supporting numpy 1.x)
+#
+# torch / torchvision         ≥2.1 pulls numpy>=2           ⚠ CONFLICT
+#   → NOT installed; eval_adapter.py uses pure urllib+gzip for MNIST
+#   → No torch needed for the adapter itself
+#
+# protobuf ≥3.20, <5          already satisfied by tensorflow 2.15 install
+#
+# ── Core (adapter only) ─────────────────────────────────────────────────────
+tensorflow==2.15.1              # already in CNN/venv
+numpy>=1.23.5,<2.0              # already in CNN/venv (1.26.4)
+opencv-python-headless==4.8.1.78  # MUST pin to <4.9 — newer requires numpy>=2
+tqdm>=4.66
+
+# ── Eval / evidence generation ───────────────────────────────────────────────
+# (no torch/torchvision; MNIST loaded via urllib+gzip in eval_adapter.py)
+matplotlib>=3.7                 # already in CNN/venv
+pandas>=2.0                     # already in CNN/venv
+
+# ── Testing ──────────────────────────────────────────────────────────────────
+pytest>=7.4
+
+# ───────────────────────────────────────────────────────────────────────────────
+# EXACT INSTALL COMMANDS (fresh venv on Windows, Python 3.11)
+# ───────────────────────────────────────────────────────────────────────────────
+#
+#   cd Career_guidance
+#
+#   # Option A: reuse the existing CNN/venv (already has TF 2.15 + numpy 1.26)
+#   CNN\venv\Scripts\pip install "opencv-python-headless==4.8.1.78" tqdm --no-deps
+#   CNN\venv\Scripts\pip install pytest
+#
+#   # Option B: fresh venv from scratch
+#   C:\Python311\python.exe -m venv digit_venv
+#   digit_venv\Scripts\pip install --upgrade pip
+#   digit_venv\Scripts\pip install tensorflow==2.15.1
+#   digit_venv\Scripts\pip install "numpy>=1.23.5,<2.0"
+#   digit_venv\Scripts\pip install "opencv-python-headless==4.8.1.78" --no-deps
+#   digit_venv\Scripts\pip install tqdm matplotlib pandas pytest
+#
+# ── Run tests (model mocked, no tensorflow needed at test time) ──────────────
+#   CNN\venv\Scripts\python.exe -m pytest digit_pipeline/tests/ -v
+#
+# ── Run evidence eval (needs tensorflow + cv2 + matplotlib + pandas) ─────────
+#   CNN\venv\Scripts\python.exe digit_pipeline/eval_adapter.py
+#
+# ── Run form_merge single-image pipeline (needs YOLO best.pt from teammate) ──
+#   CNN\venv\Scripts\pip install ultralytics   # add when best.pt is available
+#   CNN\venv\Scripts\python.exe -m digit_pipeline.form_merge single <image.jpg>
