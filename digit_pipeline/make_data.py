@@ -40,6 +40,14 @@ try:
 except ImportError:
     _HAS_MNIST = False
 
+try:
+    from digit_pipeline.auto_boxes import validate_box_sizes
+except ImportError:
+    try:
+        from auto_boxes import validate_box_sizes
+    except ImportError:
+        validate_box_sizes = None  # graceful fallback if running standalone
+
 # ─────────────────────────────────────────────────────────── config constants
 
 CANVAS_PAD        = 40     # extra padding added around the warped form
@@ -315,8 +323,17 @@ def generate_dataset(
     with open(boxes_path) as f:
         boxes: list[list[int]] = json.load(f)  # list of [x1,y1,x2,y2]
 
-    print(f"[make_data] Template {template.shape[1]}×{template.shape[0]}, "
-          f"{len(boxes)} boxes, generating {n} images …")
+    # ── Guard: fail loudly if boxes.json has size inconsistencies
+    if validate_box_sizes is not None:
+        if not validate_box_sizes(boxes):
+            sys.exit("[make_data] ABORT: boxes.json failed 15% size check. "
+                     "Re-run auto_boxes.py or fix boxes.json.")
+    else:
+        print("[make_data] WARNING: validate_box_sizes not importable; "
+              "skipping size check.")
+
+    print(f"[make_data] Template {template.shape[1]}x{template.shape[0]}, "
+          f"{len(boxes)} boxes, generating {n} images ...")
 
     # ── MNIST cache
     mnist_cache = _load_mnist_digits(mnist_root)

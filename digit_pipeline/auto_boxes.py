@@ -37,6 +37,43 @@ LABEL_ORDER = [
     "co_a","co_b","co_c","co_d","co_e",
 ]
 
+# Row groups for size-consistency check
+_BOX_GROUPS = [
+    ("Date",       list(range(0,  8))),
+    ("StudentMob", list(range(8,  18))),
+    ("ParentMob",  list(range(18, 28))),
+    ("Cutoff",     list(range(28, 33))),
+]
+SIZE_TOL = 0.15   # 15 % of group median
+
+
+def validate_box_sizes(boxes: list[list[int]],
+                       tol: float = SIZE_TOL) -> bool:
+    """
+    Check that every box in each row-group is within *tol* (15 %) of the
+    group median width and height.  Prints a report and returns False if any
+    box fails; returns True when all pass.
+    """
+    import numpy as np
+    ok = True
+    for gname, idxs in _BOX_GROUPS:
+        ws = [boxes[i][2] - boxes[i][0] for i in idxs]
+        hs = [boxes[i][3] - boxes[i][1] for i in idxs]
+        mw, mh = float(np.median(ws)), float(np.median(hs))
+        for rank, i in enumerate(idxs):
+            dw = abs(ws[rank] - mw) / mw
+            dh = abs(hs[rank] - mh) / mh
+            if dw > tol or dh > tol:
+                print(f"[SIZE-CHECK FAIL] {gname} box {i+1} "
+                      f"({LABEL_ORDER[i]}): "
+                      f"w={ws[rank]} dw={dw:.1%}  h={hs[rank]} dh={dh:.1%}  "
+                      f"(tolerance {tol:.0%})")
+                ok = False
+    if ok:
+        print("[SIZE-CHECK] All 33 boxes within "
+              f"{tol:.0%} of group medians. OK.")
+    return ok
+
 
 # ─────────────────────────── scan helpers ───────────────────────────
 
@@ -257,14 +294,22 @@ def detect_boxes(template_path: str, out_json: str,
 
     # Save boxes.json
     Path(out_json).parent.mkdir(parents=True, exist_ok=True)
+    boxes_list = [[x1,y1,x2,y2] for x1,y1,x2,y2 in ordered]
     with open(out_json, "w") as f:
-        json.dump([[x1,y1,x2,y2] for x1,y1,x2,y2 in ordered], f, indent=2)
+        json.dump(boxes_list, f, indent=2)
     print(f"\n[auto_boxes] boxes.json -> {out_json}")
+
+    # ── Mandatory size-consistency check (15% median tolerance)
+    if not validate_box_sizes(boxes_list):
+        import sys
+        sys.exit("[auto_boxes] ABORT: box sizes failed 15% tolerance. "
+                 "Fix detection before proceeding.")
 
     # Save preview
     _save_ok_preview(img, [date_boxes, smob_boxes, pmob_boxes, co_boxes],
                      preview_path)
     return True
+
 
 
 # ─────────────────────────── preview helpers ────────────────────────
