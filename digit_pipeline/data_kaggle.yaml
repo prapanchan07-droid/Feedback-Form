@@ -1,0 +1,16 @@
+# data_kaggle.yaml  –  YOLOv8 dataset config for Kaggle notebooks
+#
+# Upload the yolo_box_detector_data.zip to Kaggle as a dataset.
+# The zip contains: images/ labels/ data_kaggle.yaml
+# Unzip to /kaggle/working/box_data/ then point this yaml at it.
+#
+# In the Kaggle notebook, set:
+#   DATA_YAML = "/kaggle/working/box_data/data_kaggle.yaml"
+
+path: /kaggle/working/box_data   # root dataset dir inside Kaggle
+train: images/train
+val:   images/val
+
+nc: 1
+names:
+  - box

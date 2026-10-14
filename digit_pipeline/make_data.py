@@ -42,10 +42,12 @@ except ImportError:
 
 # ─────────────────────────────────────────────────────────── config constants
 
-CANVAS_PAD  = 40          # extra padding added around the warped form
-BOX_FILL_P  = 0.70        # probability a box gets a digit
-TRAIN_RATIO = 0.85
-YOLO_CLASS  = 0           # single class: "box"
+CANVAS_PAD        = 40     # extra padding added around the warped form
+BOX_FILL_P        = 0.70   # probability a box gets a digit
+TRAIN_RATIO       = 0.85
+YOLO_CLASS        = 0      # single class: "box"
+OVERFLOW_DIGIT_P  = 0.15   # prob a filled box gets an overflow-offset digit
+EDGE_CROP_P       = 0.10   # prob image has one page-edge randomly cropped
 
 # ──────────────────────────────────────────────────────────────── MNIST loader
 
@@ -199,27 +201,90 @@ def _paste_digit(
     img: np.ndarray,
     box: list[int],
     digit_patch: np.ndarray,
+    overflow: bool = False,
 ) -> None:
-    """Paste *digit_patch* (dark on white, uint8) into *box* on *img* in-place."""
+    """
+    Paste *digit_patch* (dark on white, uint8) into *box* on *img* in-place.
+    If *overflow* is True the digit is randomly offset so it crosses the cell
+    border (simulates sloppy handwriting that overflows the box).
+    """
     x1, y1, x2, y2 = box
     bw, bh = max(1, x2 - x1), max(1, y2 - y1)
-    # Leave a small inner margin so the digit doesn't touch the border
     margin = max(2, min(bw, bh) // 8)
     iw, ih = bw - 2 * margin, bh - 2 * margin
     if iw < 4 or ih < 4:
         return
     patch = cv2.resize(digit_patch, (iw, ih), interpolation=cv2.INTER_AREA)
-    # Dark ink (< 128) is written; bright background (~255) is transparent
-    roi = img[y1 + margin: y2 - margin, x1 + margin: x2 - margin]
-    if roi.shape[:2] != patch.shape[:2]:
+
+    if overflow:
+        # Random offset: 10-40% of cell dimension in a random direction
+        max_dx = int(bw * random.uniform(0.10, 0.40))
+        max_dy = int(bh * random.uniform(0.10, 0.40))
+        dx = random.randint(-max_dx, max_dx)
+        dy = random.randint(-max_dy, max_dy)
+    else:
+        dx, dy = 0, 0
+
+    ry1 = y1 + margin + dy
+    ry2 = y2 - margin + dy
+    rx1 = x1 + margin + dx
+    rx2 = x2 - margin + dx
+
+    img_h, img_w = img.shape[:2]
+    # Clamp paste region to image bounds
+    ry1c, ry2c = max(0, ry1), min(img_h, ry2)
+    rx1c, rx2c = max(0, rx1), min(img_w, rx2)
+    py1c = ry1c - ry1   # corresponding patch slice start
+    py2c = py1c + (ry2c - ry1c)
+    px1c = rx1c - rx1
+    px2c = px1c + (rx2c - rx1c)
+
+    if ry2c <= ry1c or rx2c <= rx1c or py2c <= py1c or px2c <= px1c:
         return
-    # Multiply: keep existing texture where patch is bright (paper), darken where digit
-    alpha = (255 - patch.astype(np.float32)) / 255.0    # 1 where ink, 0 where paper
+    patch_crop = patch[py1c:py2c, px1c:px2c]
+    roi = img[ry1c:ry2c, rx1c:rx2c]
+    if roi.shape[:2] != patch_crop.shape[:2]:
+        return
+
+    alpha = (255 - patch_crop.astype(np.float32)) / 255.0
     if len(roi.shape) == 3:
         alpha = alpha[:, :, np.newaxis]
-    ink_colour = np.full_like(roi, 20, dtype=np.float32)  # near-black ink
+    ink_colour = np.full_like(roi, 20, dtype=np.float32)
     blended = roi.astype(np.float32) * (1 - alpha) + ink_colour * alpha
-    img[y1 + margin: y2 - margin, x1 + margin: x2 - margin] = np.clip(blended, 0, 255).astype(np.uint8)
+    img[ry1c:ry2c, rx1c:rx2c] = np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def _random_edge_crop(
+    img: np.ndarray,
+    boxes: list[list[int]],
+    crop_frac_range: tuple[float, float] = (0.05, 0.20),
+) -> tuple[np.ndarray, list[list[int]]]:
+    """
+    Crop one random edge of the image by 5-20%, simulating a partially
+    scanned page edge.  Boxes that fall outside the remaining area are
+    clamped; labels with zero area after clamping are kept (they become
+    very small and the NMS in training handles them).
+    """
+    h, w = img.shape[:2]
+    side  = random.choice(['left', 'right', 'top', 'bottom'])
+    frac  = random.uniform(*crop_frac_range)
+    if side == 'left':
+        cut = int(w * frac)
+        img = img[:, cut:]
+        boxes = [[max(0, x1-cut), y1, max(0, x2-cut), y2] for x1,y1,x2,y2 in boxes]
+    elif side == 'right':
+        cut = int(w * frac)
+        img = img[:, :w-cut]
+        boxes = [[x1, y1, min(w-cut, x2), y2] for x1,y1,x2,y2 in boxes]
+    elif side == 'top':
+        cut = int(h * frac)
+        img = img[cut:, :]
+        boxes = [[x1, max(0, y1-cut), x2, max(0, y2-cut)] for x1,y1,x2,y2 in boxes]
+    else:  # bottom
+        cut = int(h * frac)
+        img = img[:h-cut, :]
+        boxes = [[x1, y1, x2, min(h-cut, y2)] for x1,y1,x2,y2 in boxes]
+    return img, boxes
 
 
 # ────────────────────────────────────────────────────────── label writer helper
@@ -271,7 +336,7 @@ def generate_dataset(
         img = template.copy()
         cur_boxes = [list(b) for b in boxes]   # deep copy
 
-        # ── Fill ~70 % of boxes with MNIST digits
+        # ── Fill ~70 % of boxes with MNIST digits (15 % of those overflow)
         for b_idx, box in enumerate(cur_boxes):
             if random.random() < BOX_FILL_P:
                 digit = random.randint(0, 9)
@@ -282,12 +347,17 @@ def generate_dataset(
                     bw = box[2] - box[0]
                     bh = box[3] - box[1]
                     patch = _make_synthetic_digit_patch(digit, (bw, bh))
-                _paste_digit(img, box, patch)
+                overflow = random.random() < OVERFLOW_DIGIT_P
+                _paste_digit(img, box, patch, overflow=overflow)
 
         # ── Geometric augmentations (transform both image AND boxes)
         img, cur_boxes = _random_scale(img, cur_boxes)
         img, cur_boxes = _random_rotate(img, cur_boxes)
         img, cur_boxes = _random_perspective(img, cur_boxes)
+
+        # ── Page-edge crop (~10 % of images)
+        if random.random() < EDGE_CROP_P:
+            img, cur_boxes = _random_edge_crop(img, cur_boxes)
 
         # ── Photometric augmentations
         img = _brightness_contrast(img)
