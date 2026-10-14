@@ -273,9 +273,6 @@ def _load_mnist_test(
     cache_dir = ROOT / "scratch" / "_mnist_cache"
     all_images, all_labels = _download_mnist(cache_dir)
 
-    # MNIST is originally black ink on white; invert so white ink on black
-    all_images = 255 - all_images
-
     idxs = rng.choice(len(all_images), size=n_samples, replace=False)
     imgs  = [all_images[i] for i in idxs]
     lbls  = [int(all_labels[i]) for i in idxs]
