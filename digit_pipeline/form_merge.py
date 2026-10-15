@@ -521,16 +521,22 @@ def _preprocess_box(
     # Connected-component filtering
     n_cc, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     h_bin, w_bin = binary.shape
+    keep_ratio = float(cfg.get("component_keep_ratio", 0.15))
+    candidates = []
     for i in range(1, n_cc):
         cx, cy, cw, ch, area = stats[i, :5]
-        if area < min_cc_area:
+        on_edge = int(cx <= 0) + int(cy <= 0) + int(cx + cw >= w_bin) + int(cy + ch >= h_bin)
+        aspect = max(cw, ch) / max(min(cw, ch), 1)
+        is_line = on_edge >= 2 and aspect >= min_asp_line and (on_edge / 4.0) >= max_edge_fr
+        if is_line or area < min_cc_area:
             binary[labels == i] = 0
-            continue
-        # Drop edge-touching line fragments
-        on_edge = int(cx<=0) + int(cy<=0) + int(cx+cw>=w_bin) + int(cy+ch>=h_bin)
-        aspect  = max(cw, ch) / max(min(cw, ch), 1)
-        if on_edge >= 2 and aspect >= min_asp_line and (on_edge/4.0) >= max_edge_fr:
-            binary[labels == i] = 0
+        else:
+            candidates.append((i, int(area)))
+    if candidates:
+        largest = max(a for _, a in candidates)
+        for i, a in candidates:
+            if a < keep_ratio * largest:  # drop small fragments
+                binary[labels == i] = 0
 
     # Resize to target_size x target_size
     ys, xs = np.where(binary > 0)

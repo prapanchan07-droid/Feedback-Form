@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "ink_threshold_method": "per_form_multiotsu",
   "ink_threshold_global": 111,
   "ink_threshold_clamp_lo": 103,
@@ -8,8 +8,8 @@
   "illumination_flatten_ksize": 51,
   "adaptive_block_size": 51,
   "adaptive_C": 10,
-  "blank_cell_ink_threshold": 5039,
-  "min_component_area": 4,
+  "blank_cell_ink_threshold": 112,
+  "min_component_area": 57,
   "max_edge_frac_for_line": 0.5,
   "min_aspect_ratio_for_line": 3.0,
   "edge_insets": {
@@ -24,5 +24,12 @@
   },
   "target_size": 28,
   "inner_size": 20,
-  "center_of_mass_shift": true
+  "center_of_mass_shift": true,
+  "component_keep_ratio": 0.15,
+  "component_keep_ratio_note": "provisional: no clear gap in data",
+  "min_component_area_rule": "relative",
+  "min_component_area_R": 0.15,
+  "blank_cell_ink_fraction_provisional": 0.005,
+  "blank_cell_ink_threshold_provisional": 112,
+  "blank_cell_note": "provisional: needs blank-form photos; all 44 calibration forms are filled"
 }
