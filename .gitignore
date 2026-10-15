@@ -28,6 +28,11 @@ build/
 
 # Uploaded student documents
 uploads/
+
+# Real student form scans (PRIVACY - never commit)
+data/real_forms/
+data/real_forms_new/
+real_forms/
 storage/
 
 # Generated test/debug output
@@ -52,6 +57,11 @@ cnn_dataset/
 
 # Large CSV Datasets
 CNN/*.csv
-*.png
-!bannari_amman_form_template.png
+# Form pipeline venv
+venv_form/
 
+# Generated training data (large, regeneratable)
+digit_pipeline/data/
+digit_pipeline/runs/
+digit_pipeline/mnist_data/
+digit_pipeline/kaggle_upload/box_dataset.zip
