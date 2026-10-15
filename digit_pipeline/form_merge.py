@@ -55,12 +55,136 @@ from digit_pipeline.predict_digit import predict_digit  # noqa: E402  ← real C
 
 _EXPECTED_ROW_COUNTS = [8, 20, 5]   # date, mobile-row, cutoff
 
+# Acceptable box-count ranges per row (real scans may have extras from
+# the decimal-area or overlapping detections; we take leftmost N boxes).
+_ROW_RANGES = {
+    "date":   (6,  11, 8),   # (min, max, target)
+    "mobile": (16, 24, 20),
+    "cutoff": (3,  10, 5),
+}
+
 # Confidence threshold below which a digit is flagged for review
 CONFIDENCE_THRESHOLD = 0.80
 
 # YOLO inference settings
 YOLO_CONF   = 0.25
+YOLO_IOU    = 0.70   # default NMS IoU (lowering gives FEWER boxes, not more)
 YOLO_IMGSZ  = 1280
+
+# Template used for homography projection (Phase 1)
+_TEMPLATE_BOXES_JSON = Path(__file__).parent / "boxes.json"
+
+# Cached template boxes (loaded once on first use)
+_TEMPLATE_BOXES: list[Box] | None = None
+
+
+def _get_template_boxes() -> list[Box]:
+    """Lazy-load and cache the 33 template boxes from boxes.json."""
+    global _TEMPLATE_BOXES
+    if _TEMPLATE_BOXES is None:
+        _TEMPLATE_BOXES = json.loads(_TEMPLATE_BOXES_JSON.read_text())
+    return _TEMPLATE_BOXES
+
+
+# ── Preprocessing config (Phase 2) ────────────────────────────────────────────
+
+_PREPROCESS_CONFIG_PATH = Path(__file__).parent / "preprocess_config.json"
+_PREPROCESS_CONFIG: dict | None = None
+
+_PREPROCESS_CONFIG_DEFAULTS: dict = {
+    "version": 0,
+    "ink_threshold_method":      "per_form_multiotsu",
+    "ink_threshold_global":      100,
+    "ink_threshold_clamp_lo":    50,
+    "ink_threshold_clamp_hi":    150,
+    "illumination_method":       "raw_multiotsu",
+    "illumination_flatten_ksize": 51,
+    "adaptive_block_size":       51,
+    "adaptive_C":                10,
+    "blank_cell_ink_threshold":  30,
+    "min_component_area":        5,
+    "max_edge_frac_for_line":    0.5,
+    "min_aspect_ratio_for_line": 3.0,
+    "edge_insets": {"top": 2, "bottom": 2, "left": 2, "right": 2},
+    "extra_left_inset": {},
+    "target_size": 28,
+    "inner_size":  20,
+    "center_of_mass_shift": True,
+}
+
+
+def _get_preprocess_config() -> dict:
+    """Lazy-load preprocess_config.json; fall back to hardcoded defaults."""
+    global _PREPROCESS_CONFIG
+    if _PREPROCESS_CONFIG is None:
+        if _PREPROCESS_CONFIG_PATH.exists():
+            loaded = json.loads(_PREPROCESS_CONFIG_PATH.read_text())
+            cfg = dict(_PREPROCESS_CONFIG_DEFAULTS)
+            cfg.update(loaded)
+            _PREPROCESS_CONFIG = cfg
+        else:
+            _PREPROCESS_CONFIG = dict(_PREPROCESS_CONFIG_DEFAULTS)
+    return _PREPROCESS_CONFIG
+
+
+def _multiotsu2_pixels(pixels: np.ndarray) -> tuple[int, int]:
+    """
+    Pure-numpy 3-class Otsu on a flat pixel array.
+    Returns (t_ink_ghost, t_ghost_paper).
+    """
+    hist, _ = np.histogram(pixels.ravel(), bins=256, range=(0, 256))
+    h = hist.astype(np.float64)
+    total = h.sum()
+    if total == 0:
+        return 80, 180
+    h /= total
+    vals = np.arange(256, dtype=np.float64)
+    p  = np.cumsum(h)
+    mu = np.cumsum(h * vals)
+    mu_t = mu[-1]
+    best_var, best_t1, best_t2 = -1.0, 80, 180
+    for t1 in range(1, 254):
+        w0 = p[t1]
+        if w0 <= 0 or w0 >= 1:
+            continue
+        m0 = mu[t1] / w0
+        t2_arr = np.arange(t1 + 1, 255)
+        w1 = p[t2_arr] - p[t1];  w2 = 1.0 - p[t2_arr]
+        ok = (w1 > 0) & (w2 > 0)
+        if not ok.any():
+            continue
+        t2_ok = t2_arr[ok]; w1_ok = w1[ok]; w2_ok = w2[ok]
+        m1 = (mu[t2_ok] - mu[t1]) / w1_ok
+        m2 = (mu_t - mu[t2_ok]) / w2_ok
+        var = w0*(m0-mu_t)**2 + w1_ok*(m1-mu_t)**2 + w2_ok*(m2-mu_t)**2
+        idx = int(np.argmax(var))
+        if var[idx] > best_var:
+            best_var = var[idx]; best_t1 = t1; best_t2 = int(t2_ok[idx])
+    return best_t1, best_t2
+
+
+def _compute_form_ink_threshold(img_gray: np.ndarray, all_boxes: list[Box]) -> int:
+    """
+    Pool pixels from all cell interiors of one form, run 3-class Otsu,
+    return t1 (ink/ghost boundary) clamped to the config safe range.
+    """
+    cfg = _get_preprocess_config()
+    t_lo     = int(cfg.get("ink_threshold_clamp_lo", 50))
+    t_hi     = int(cfg.get("ink_threshold_clamp_hi", 150))
+    t_global = int(cfg.get("ink_threshold_global", 100))
+    inset = 3
+    pixels = []
+    for box in all_boxes:
+        x1 = max(0, box[0] + inset);  y1 = max(0, box[1] + inset)
+        x2 = min(img_gray.shape[1], box[2] - inset)
+        y2 = min(img_gray.shape[0], box[3] - inset)
+        if x2 > x1 and y2 > y1:
+            pixels.append(img_gray[y1:y2, x1:x2].ravel())
+    if not pixels:
+        return t_global
+    px = np.concatenate(pixels)
+    t1, _ = _multiotsu2_pixels(px)
+    return int(np.clip(t1, t_lo, t_hi))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Type aliases
@@ -69,6 +193,97 @@ YOLO_IMGSZ  = 1280
 Box   = list[int]          # [x1, y1, x2, y2]
 Row   = list[Box]          # sorted left-to-right
 Digit = tuple[str, float]  # (digit_str, confidence)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 1 helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _iou(a: Box, b: Box) -> float:
+    """Intersection-over-Union of two [x1,y1,x2,y2] boxes."""
+    xi1 = max(a[0], b[0]); yi1 = max(a[1], b[1])
+    xi2 = min(a[2], b[2]); yi2 = min(a[3], b[3])
+    inter = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def project_cutoff_via_homography(
+    date_boxes:   list[Box],   # 8 detected boxes in photo coords (sorted L->R)
+    mobile_boxes: list[Box],   # 20 detected boxes in photo coords (sorted L->R)
+    tpl_boxes:    list[Box],   # full 33 template boxes from boxes.json
+    detected_cutoff: list[Box],  # all detected boxes in the cutoff row area
+    iou_thr:          float = 0.50,
+    inlier_ratio_min: float = 0.70,
+) -> tuple[list[Box], bool, float]:
+    """
+    Estimate a homography from the 28 clean anchor boxes (date+mobile) and
+    project the 5 template cutoff cells into photo coordinates.
+
+    Parameters
+    ----------
+    date_boxes, mobile_boxes  : exactly 8 and 20 detected anchor boxes
+    tpl_boxes                 : boxes.json list (33 entries); indices 0:28 are
+                                anchors, 28:33 are the cutoff cells to project
+    detected_cutoff           : all YOLO boxes in the cutoff row (may be 3-10)
+    iou_thr                   : min IoU to prefer a detected box over projected
+    inlier_ratio_min          : below this RANSAC inlier ratio -> needs_review
+
+    Returns
+    -------
+    cutoff_boxes  : list of exactly 5 [x1,y1,x2,y2] in photo coords, sorted x
+    needs_review  : True if homography failed or inlier ratio too low
+    inlier_ratio  : float (0-1); fraction of RANSAC inliers among 28 anchors
+    """
+    photo_anchors = date_boxes + mobile_boxes        # 8 + 20 = 28 points
+    tpl_anchors   = tpl_boxes[:28]                  # template counterparts
+    tpl_cutoff_5  = tpl_boxes[28:33]                # 5 cutoff cells in template
+
+    if len(photo_anchors) != 28 or len(tpl_anchors) != 28:
+        return [], True, 0.0
+
+    def _ctr(b: Box):
+        return [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0]
+
+    src = np.array([_ctr(b) for b in tpl_anchors],   dtype=np.float32).reshape(-1, 1, 2)
+    dst = np.array([_ctr(b) for b in photo_anchors], dtype=np.float32).reshape(-1, 1, 2)
+    # findHomography(src, dst) -> H such that dst_pt ~ H @ src_pt
+    # i.e., photo_pt = H * tpl_pt  (what we want)
+    # threshold=15px: generous for YOLO 1280->7680px upscale localization error
+    H, mask = cv2.findHomography(src, dst, cv2.RANSAC, 15.0)
+
+    if H is None or mask is None:
+        return [], True, 0.0
+
+    inlier_ratio = float(mask.ravel().sum()) / len(mask)
+    needs_review = inlier_ratio < inlier_ratio_min
+
+    result: list[Box] = []
+    for tbox in tpl_cutoff_5:
+        # Project all 4 corners of the template box into photo space
+        corners = np.array([
+            [tbox[0], tbox[1]], [tbox[2], tbox[1]],
+            [tbox[2], tbox[3]], [tbox[0], tbox[3]],
+        ], dtype=np.float32).reshape(-1, 1, 2)
+        proj = cv2.perspectiveTransform(corners, H).reshape(-1, 2)
+        px1, py1 = proj.min(axis=0)
+        px2, py2 = proj.max(axis=0)
+        proj_box: Box = [int(px1), int(py1), int(px2), int(py2)]
+
+        # Prefer detected box if IoU >= iou_thr
+        best_iou, best_det = 0.0, None
+        for det in detected_cutoff:
+            v = _iou(proj_box, det)
+            if v > best_iou:
+                best_iou, best_det = v, det
+
+        result.append(best_det if (best_iou >= iou_thr and best_det is not None)
+                      else proj_box)
+
+    result.sort(key=lambda b: b[0])
+    return result, needs_review, inlier_ratio
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -129,42 +344,60 @@ def assign_fields(rows: list[Row]) -> dict[str, list[Box]]:
     """
     Map the detected rows to named form fields.
 
-    Steps
-    -----
-    1. Discard stray rows (any row that does NOT have exactly 5, 8, or 20 boxes).
-       This eliminates the 0-9 reference strip and any noise detections.
-    2. Verify the remaining row counts are exactly [8, 20, 5].
-    3. Split the 20-box row at the largest horizontal gap -> student / parent.
-    4. Return a dict with keys: date, student_mobile, parent_mobile, cutoff.
+    Strategy
+    --------
+    1. Mobile row is uniquely identified by count (16-24 boxes, no overlap).
+    2. Among the remaining rows (with 3-12 boxes each), we use Y-POSITION:
+         - topmost row  -> date   (capped to 8 boxes)
+         - bottommost row -> cutoff (capped to 5 boxes)
+       This avoids any count-range ambiguity when the cutoff area has 6-9
+       boxes from decimal / overlapping detections on real scans.
+    3. Each row is capped to its target count by keeping the leftmost N
+       boxes (left-to-right digit order).
+    4. The 20-box mobile row is split at the largest horizontal gap into
+       student (10 boxes) and parent (10 boxes).
 
     Raises
     ------
-    ValueError  if the surviving rows do not match the expected layout.
+    ValueError  if the expected rows cannot be identified.
     """
-    valid_counts = set(_EXPECTED_ROW_COUNTS)  # {5, 8, 20}
-    kept: list[Row] = [r for r in rows if len(r) in valid_counts]
+    def _yc_row(r: Row) -> float:
+        return sum((b[1] + b[3]) / 2 for b in r) / len(r)
 
-    # Sort kept rows top-to-bottom by their median y-centre
-    kept.sort(key=lambda r: sum((b[1] + b[3]) / 2 for b in r) / len(r))
-
-    # Extract by count
-    count_map: dict[int, list[Row]] = {5: [], 8: [], 20: []}
-    for row in kept:
-        count_map[len(row)].append(row)
-
-    # We expect exactly one row of each count
-    if (len(count_map[8])  != 1 or
-            len(count_map[20]) != 1 or
-            len(count_map[5])  != 1):
+    # ── Step 1: find mobile row by count (16-24), uniquely
+    mobile_lo, mobile_hi, mobile_tgt = _ROW_RANGES["mobile"]
+    mobile_rows = [r for r in rows if mobile_lo <= len(r) <= mobile_hi]
+    if len(mobile_rows) != 1:
+        counts = [len(r) for r in sorted(rows, key=_yc_row)]
         raise ValueError(
-            f"Unexpected row layout after filtering. "
-            f"Got counts: {[len(r) for r in kept]} "
-            f"(expected {_EXPECTED_ROW_COUNTS})."
+            f"Expected exactly 1 mobile row (16-24 boxes); "
+            f"found {len(mobile_rows)}. All row counts: {counts}"
         )
+    mobile_row_raw = mobile_rows[0]
 
-    date_row   = count_map[8][0]
-    mobile_row = count_map[20][0]
-    cutoff_row = count_map[5][0]
+    # ── Step 2: from remaining rows pick date (topmost) and cutoff (bottommost)
+    others = [r for r in rows if r is not mobile_row_raw and 3 <= len(r) <= 12]
+    if len(others) < 2:
+        counts = [len(r) for r in sorted(rows, key=_yc_row)]
+        raise ValueError(
+            f"Expected at least 2 non-mobile rows (date + cutoff); "
+            f"found {len(others)} with 3-12 boxes. All row counts: {counts}"
+        )
+    others_sorted = sorted(others, key=_yc_row)
+    date_row_raw   = others_sorted[0]   # topmost
+    cutoff_row_raw = others_sorted[-1]  # bottommost
+
+    if date_row_raw is cutoff_row_raw:
+        raise ValueError("date and cutoff resolved to the same row.")
+
+    # ── Step 3: cap to target counts (leftmost N boxes)
+    def _cap(row: Row, field: str) -> Row:
+        _, _, target = _ROW_RANGES[field]
+        return sorted(row, key=lambda b: b[0])[:target]
+
+    date_row   = _cap(date_row_raw,   "date")
+    mobile_row = _cap(mobile_row_raw, "mobile")
+    cutoff_row = _cap(cutoff_row_raw, "cutoff")
 
     # ── Split 20-box row at the largest horizontal gap ──
     # Gap = left edge of box[i+1] minus right edge of box[i]
@@ -208,55 +441,152 @@ def assign_fields(rows: list[Row]) -> dict[str, list[Box]]:
 # TASK 2-3 – Box reading
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _preprocess_box(img: np.ndarray, box: Box, pad: int = 3) -> np.ndarray:
+def _preprocess_box(
+    img: np.ndarray,
+    box: Box,
+    ink_thr: int | None = None,
+    box_idx: int | None = None,
+) -> np.ndarray:
     """
-    Crop a single box from *img*, apply preprocessing, return 28×28 uint8
+    Crop a single box from *img*, apply preprocessing, return 28x28 uint8
     (white digit on black background) ready for predict_digit.
 
-    Steps
-    -----
-    1. Crop with *pad* px inset on each side.
-    2. Grayscale conversion.
-    3. Binary inverse threshold at 120 (removes light-grey guide/ghost digits).
-    4. Resize to 28×28.
+    All parameters (threshold, insets, CC filtering, resize) are driven by
+    digit_pipeline/preprocess_config.json (written by calibrate_preprocessing.py).
+    Falls back to safe built-in defaults when the config file is absent.
+
+    Parameters
+    ----------
+    img      : full form image (BGR or grayscale)
+    box      : [x1, y1, x2, y2] in img coordinates
+    ink_thr  : per-form ink threshold (from _compute_form_ink_threshold);
+               if None the config global fallback is used.
+    box_idx  : 0-based index in the 33-box sequence; used for per-box
+               extra left inset (e.g. date[0], cutoff[0]).
     """
+    cfg = _get_preprocess_config()
+    insets_cfg = cfg.get("edge_insets", {"top": 2, "bottom": 2, "left": 2, "right": 2})
+    extra_left_cfg = cfg.get("extra_left_inset", {})
+    illum  = cfg.get("illumination_method", "raw_multiotsu")
+    tgt    = int(cfg.get("target_size", 28))
+    inner  = int(cfg.get("inner_size",  20))
+    do_com = bool(cfg.get("center_of_mass_shift", True))
+    min_cc_area = int(cfg.get("min_component_area", 5))
+    max_edge_fr = float(cfg.get("max_edge_frac_for_line", 0.5))
+    min_asp_line= float(cfg.get("min_aspect_ratio_for_line", 3.0))
+
+    # Per-box extra left inset (e.g. '0' -> date[0], '28' -> cutoff[0])
+    extra_left = 0
+    if box_idx is not None:
+        extra_left = int(extra_left_cfg.get(str(box_idx), 0))
+
     x1, y1, x2, y2 = box
-    # Inset padding (clamp to image bounds)
-    px1 = max(0, x1 + pad)
-    py1 = max(0, y1 + pad)
-    px2 = min(img.shape[1], x2 - pad)
-    py2 = min(img.shape[0], y2 - pad)
+    it = int(insets_cfg.get("top",    2))
+    ib = int(insets_cfg.get("bottom", 2))
+    il = int(insets_cfg.get("left",   2)) + extra_left
+    ir = int(insets_cfg.get("right",  2))
+
+    px1 = max(0, x1 + il); py1 = max(0, y1 + it)
+    px2 = min(img.shape[1], x2 - ir)
+    py2 = min(img.shape[0], y2 - ib)
 
     if px2 <= px1 or py2 <= py1:
-        return np.zeros((28, 28), dtype=np.uint8)
+        return np.zeros((tgt, tgt), dtype=np.uint8)
 
     crop = img[py1:py2, px1:px2]
 
     # Grayscale
-    if len(crop.shape) == 3:
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = crop.copy()
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop.copy()
 
-    # Threshold: ink (dark) -> white; background (light including ghost) -> black
-    _, binary = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
+    # Illumination normalisation
+    if illum == "flatten_multiotsu":
+        ksize = int(cfg.get("illumination_flatten_ksize", 51)) | 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (ksize, ksize))
+        bg = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel).astype(np.float32)
+        bg = np.clip(bg, 1, 255)
+        gray = (gray.astype(np.float32) / bg * 255).clip(0, 255).astype(np.uint8)
+    elif illum == "adaptive":
+        block = int(cfg.get("adaptive_block_size", 51)) | 1
+        C_val = int(cfg.get("adaptive_C", 10))
+        return cv2.resize(
+            cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY_INV, block, C_val),
+            (tgt, tgt), interpolation=cv2.INTER_AREA,
+        )
 
-    # Resize to 28×28 for the CNN
-    resized = cv2.resize(binary, (28, 28), interpolation=cv2.INTER_AREA)
-    return resized
+    # Threshold (ink dark -> white; background+ghost -> black)
+    thr = ink_thr if ink_thr is not None else int(cfg.get("ink_threshold_global", 100))
+    _, binary = cv2.threshold(gray, thr, 255, cv2.THRESH_BINARY_INV)
+
+    # Connected-component filtering
+    n_cc, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    h_bin, w_bin = binary.shape
+    for i in range(1, n_cc):
+        cx, cy, cw, ch, area = stats[i, :5]
+        if area < min_cc_area:
+            binary[labels == i] = 0
+            continue
+        # Drop edge-touching line fragments
+        on_edge = int(cx<=0) + int(cy<=0) + int(cx+cw>=w_bin) + int(cy+ch>=h_bin)
+        aspect  = max(cw, ch) / max(min(cw, ch), 1)
+        if on_edge >= 2 and aspect >= min_asp_line and (on_edge/4.0) >= max_edge_fr:
+            binary[labels == i] = 0
+
+    # Resize to target_size x target_size
+    ys, xs = np.where(binary > 0)
+    if len(xs) == 0:
+        return np.zeros((tgt, tgt), dtype=np.uint8)
+
+    # Tight-crop ink bounding box
+    ink_crop = binary[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    ih, iw   = ink_crop.shape
+    scale    = inner / max(ih, iw, 1)
+    new_h    = max(1, int(round(ih * scale)))
+    new_w    = max(1, int(round(iw * scale)))
+    ink_r    = cv2.resize(ink_crop, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    canvas = np.zeros((tgt, tgt), dtype=np.uint8)
+    yo = (tgt - new_h) // 2; xo = (tgt - new_w) // 2
+    canvas[yo:yo+new_h, xo:xo+new_w] = ink_r
+
+    # Centre-of-mass shift (capped at +-3 px)
+    if do_com:
+        m = cv2.moments(canvas)
+        if m["m00"] > 0:
+            cx_m = m["m10"] / m["m00"]; cy_m = m["m01"] / m["m00"]
+            dx = int(round(tgt/2 - cx_m)); dy = int(round(tgt/2 - cy_m))
+            dx = max(-3, min(3, dx));      dy = max(-3, min(3, dy))
+            M_shift = np.float32([[1, 0, dx], [0, 1, dy]])
+            canvas = cv2.warpAffine(canvas, M_shift, (tgt, tgt))
+
+    return canvas
 
 
 def read_field(
     img: np.ndarray,
     boxes: list[Box],
+    ink_thr: int | None = None,
+    box_idx_start: int = 0,
 ) -> list[Digit]:
     """
     For each box in *boxes* (in order, left-to-right):
-      1. Preprocess to 28×28 binary image (THRESH_BINARY_INV).
+      1. Preprocess to 28x28 binary image using config-driven pipeline.
       2. Call predict_digit.
       3. Return the list of (digit_str, confidence) pairs.
+
+    Parameters
+    ----------
+    img           : full form image
+    boxes         : list of [x1,y1,x2,y2]
+    ink_thr       : per-form ink threshold (from _compute_form_ink_threshold)
+    box_idx_start : global index of boxes[0] in the 33-box sequence (for
+                    per-box extra-left-inset lookup)
     """
-    return [predict_digit(_preprocess_box(img, box)) for box in boxes]
+    return [
+        predict_digit(_preprocess_box(img, box, ink_thr=ink_thr,
+                                      box_idx=box_idx_start + i))
+        for i, box in enumerate(boxes)
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -424,6 +754,7 @@ def process_form(
         source=str(img_path),
         imgsz=YOLO_IMGSZ,
         conf=YOLO_CONF,
+        iou=YOLO_IOU,
         verbose=False,
     )
     raw_boxes: list[Box] = []
@@ -447,9 +778,11 @@ def process_form(
 
     rows = to_rows(raw_boxes, y_tol)
 
-    # ── Step 3: Field assignment
+    # ── Step 3: Field assignment (Phase 1: homography cutoff projection)
+    # Identify date (8) and mobile (20) rows first; use them as homography
+    # anchors to project the 5 cutoff cell positions from the template.
     try:
-        fields = assign_fields(rows)
+        fields_raw = assign_fields(rows)   # still used for date + mobile rows
     except ValueError as exc:
         return {
             "data":         {},
@@ -457,9 +790,67 @@ def process_form(
             "needs_review": True,
         }
 
-    # ── Step 4: Read each field
+    date_row_det   = fields_raw["date"]           # up to 8 boxes
+    smob_det       = fields_raw["student_mobile"]  # 10 boxes
+    pmob_det       = fields_raw["parent_mobile"]   # 10 boxes
+    mobile_row_det = smob_det + pmob_det           # 20 boxes
+
+    homography_ok  = (len(date_row_det) == 8 and len(mobile_row_det) == 20)
+    needs_review_h = False
+    inlier_ratio   = 1.0
+
+    if homography_ok:
+        # Collect all detected boxes in the cutoff y-band
+        # (same y-range as the template cutoff row, approximated from row data)
+        cutoff_row_raw = fields_raw["cutoff"]   # up to 5 boxes (leftmost-5 fallback)
+        if cutoff_row_raw:
+            cutoff_yc = sum((b[1] + b[3]) / 2 for b in cutoff_row_raw) / len(cutoff_row_raw)
+        else:
+            cutoff_yc = max((b[1] + b[3]) / 2 for b in raw_boxes)
+        # Gather ALL detected boxes within y_tol*3 of the cutoff row centre
+        detected_cutoff_all = [
+            b for b in raw_boxes
+            if abs((b[1] + b[3]) / 2 - cutoff_yc) <= y_tol * 3
+        ]
+
+        tpl_boxes = _get_template_boxes()
+        proj_cutoff, needs_review_h, inlier_ratio = project_cutoff_via_homography(
+            date_row_det, mobile_row_det, tpl_boxes, detected_cutoff_all
+        )
+        if proj_cutoff and len(proj_cutoff) == 5:
+            fields = {
+                "date":           date_row_det,
+                "student_mobile": smob_det,
+                "parent_mobile":  pmob_det,
+                "cutoff":         proj_cutoff,
+            }
+        else:
+            # Homography returned nothing usable; fall back
+            needs_review_h = True
+            fields = fields_raw
+    else:
+        # Anchor count wrong; fall back and flag
+        needs_review_h = True
+        fields = fields_raw
+
+    # ── Step 4: Compute per-form ink threshold + Read each field
+    # Compute once across ALL 33 boxes so the threshold reflects the full
+    # intensity distribution of this particular form scan.
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    all_boxes_33 = (fields["date"] + fields["student_mobile"]
+                    + fields["parent_mobile"] + fields["cutoff"])
+    ink_thr = _compute_form_ink_threshold(img_gray, all_boxes_33)
+
+    # Field index offsets for per-box extra-left-inset lookup
+    _FIELD_BOX_STARTS = {
+        "date":           0,
+        "student_mobile": 8,
+        "parent_mobile":  18,
+        "cutoff":         28,
+    }
     field_digits: dict[str, list[Digit]] = {
-        name: read_field(img, boxes)
+        name: read_field(img, boxes, ink_thr=ink_thr,
+                         box_idx_start=_FIELD_BOX_STARTS[name])
         for name, boxes in fields.items()
     }
 
@@ -469,10 +860,19 @@ def process_form(
     # ── Step 6: Validate
     issues, needs_review = validate(result, field_digits)
 
+    # Propagate homography issues
+    if needs_review_h:
+        issues.append(
+            f"Cutoff row projected by homography fallback "
+            f"(anchors_ok={homography_ok}, inlier_ratio={inlier_ratio:.2f})."
+        )
+        needs_review = True
+
     output = {
         "data":         result,
         "issues":       issues,
         "needs_review": needs_review,
+        "_inlier_ratio": round(inlier_ratio, 3),
     }
 
     # ── Optional JSON dump
