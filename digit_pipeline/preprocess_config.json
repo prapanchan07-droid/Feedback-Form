@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "ink_threshold_method": "per_form_multiotsu",
+  "ink_threshold_global": 111,
+  "ink_threshold_clamp_lo": 103,
+  "ink_threshold_clamp_hi": 117,
+  "illumination_method": "raw_multiotsu",
+  "illumination_flatten_ksize": 51,
+  "adaptive_block_size": 51,
+  "adaptive_C": 10,
+  "blank_cell_ink_threshold": 5039,
+  "min_component_area": 4,
+  "max_edge_frac_for_line": 0.5,
+  "min_aspect_ratio_for_line": 3.0,
+  "edge_insets": {
+    "top": 0,
+    "bottom": 0,
+    "left": 10,
+    "right": 10
+  },
+  "extra_left_inset": {
+    "0": 0,
+    "28": 2
+  },
+  "target_size": 28,
+  "inner_size": 20,
+  "center_of_mass_shift": true
+}
