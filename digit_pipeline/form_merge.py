@@ -72,7 +72,7 @@ YOLO_IOU    = 0.70   # default NMS IoU (lowering gives FEWER boxes, not more)
 YOLO_IMGSZ  = 1280
 
 # Template used for homography projection (Phase 1)
-_TEMPLATE_BOXES_JSON = Path(__file__).parent / "boxes.json"
+_TEMPLATE_BOXES_JSON = paths.BOXES_JSON
 
 # Cached template boxes (loaded once on first use)
 _TEMPLATE_BOXES: list[Box] | None = None
@@ -720,7 +720,7 @@ def validate(
 
 def process_form(
     path: str,
-    model_weights: str = "runs/box_detector/v1/weights/best.pt",
+    model_weights: str = "c:\Users\vshar\AIML\Ai training\Career_guidance\runs\box_detector\v1\weights\best.pt",
     y_tol: int | None = None,
     save_json: bool = True,
 ) -> dict[str, Any]:
@@ -949,7 +949,7 @@ def debug_draw(
 def batch_process(
     folder: str,
     out_csv: str = "batch_results.csv",
-    model_weights: str = "runs/box_detector/v1/weights/best.pt",
+    model_weights: str = "c:\Users\vshar\AIML\Ai training\Career_guidance\runs\box_detector\v1\weights\best.pt",
     extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".tiff", ".bmp"),
 ) -> None:
     """
@@ -1019,13 +1019,13 @@ if __name__ == "__main__":
 
     sp = sub.add_parser("single", help="Process one image.")
     sp.add_argument("image",  help="Path to scan image.")
-    sp.add_argument("--weights", default="runs/box_detector/v1/weights/best.pt")
+    sp.add_argument("--weights", default="c:\Users\vshar\AIML\Ai training\Career_guidance\runs\box_detector\v1\weights\best.pt")
     sp.add_argument("--debug", action="store_true",
                     help="Save debug_fields.jpg")
 
     bp = sub.add_parser("batch", help="Process a folder of scans.")
     bp.add_argument("folder", help="Folder containing scan images.")
-    bp.add_argument("--weights", default="runs/box_detector/v1/weights/best.pt")
+    bp.add_argument("--weights", default="c:\Users\vshar\AIML\Ai training\Career_guidance\runs\box_detector\v1\weights\best.pt")
     bp.add_argument("--out",     default="batch_results.csv")
 
     args = parser.parse_args()

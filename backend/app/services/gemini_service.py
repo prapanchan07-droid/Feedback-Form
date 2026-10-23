@@ -34,6 +34,16 @@ class GeminiVisionService:
             return self.qwen_service.extract_field_crop(crop_image, field_type)
         return None, 0.0
 
+    def extract_with_consensus(self, image: np.ndarray, original_image: np.ndarray = None) -> Tuple[Dict[str, Any], float]:
+        """
+        2-pass extraction: full form + reference-strip digit verification.
+        original_image: the full un-cropped image for digit verification.
+        """
+        if self.qwen_service:
+            return self.qwen_service.extract_with_consensus(image, original_image=original_image)
+        # Fallback to single-pass for non-Qwen
+        return self.extract_form_fields(image)
+
     def extract_form_fields(self, image: np.ndarray) -> Tuple[Dict[str, Any], float]:
         """
         Submits image to Vision API (Qwen or Gemini).

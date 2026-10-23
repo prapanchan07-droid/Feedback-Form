@@ -217,3 +217,17 @@ pytest backend/tests -v
 - Gemini API calls are made backend-only; API keys are never exposed to the browser.
 - File upload types (`.png`, `.jpg`, `.jpeg`, `.pdf`) and size limits are strictly enforced.
 - Path traversal protection is active on storage file paths.
+
+## 10. Confidence Scores (Evidence Levels)
+
+`FieldExtraction.confidence` stores a numeric compatibility score derived from the evidence level.
+
+**Mapping:**
+- HIGH = 0.9
+- MEDIUM = 0.6
+- LOW = 0.3
+- NONE = 0.0
+
+These values are evidence scores, **not** calibrated probabilities of correctness.
+
+The evidence level is also included as a prefix in `VerificationDecision.reason` (e.g., `[HIGH]`).

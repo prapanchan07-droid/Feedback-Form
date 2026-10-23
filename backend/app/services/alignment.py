@@ -112,13 +112,18 @@ class FormAligner:
         quad_tl, quad_tr, quad_br, quad_bl = [], [], [], []
 
         for cx, cy, area in candidates:
-            if cx < mid_x and cy < mid_y:
+            # Use strict < for top/left so that points exactly on the centre
+            # axis fall into the bottom-right half.  This guarantees that
+            # every candidate lands in exactly one quadrant.
+            in_left = cx < mid_x
+            in_top  = cy < mid_y
+            if in_left and in_top:
                 quad_tl.append((cx, cy))
-            elif cx >= mid_x and cy < mid_y:
+            elif (not in_left) and in_top:
                 quad_tr.append((cx, cy))
-            elif cx >= mid_x and cy >= mid_y:
+            elif (not in_left) and (not in_top):
                 quad_br.append((cx, cy))
-            elif cx < mid_x and cy >= mid_y:
+            else:  # in_left and not in_top
                 quad_bl.append((cx, cy))
 
         def best_corner(pts, tx, ty):
@@ -135,6 +140,40 @@ class FormAligner:
             return None
 
         return np.array([tl, tr, br, bl], dtype=np.float32)
+
+    def detect_markers_debug(self, image: np.ndarray):
+        """
+        Same as detect_markers but also returns the raw candidate list so
+        unit tests can inspect intermediate results without cv2 side-effects.
+        Returns (markers_array_or_None, candidates_list).
+        """
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+
+        img_h, img_w = gray.shape[:2]
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, thresh = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        candidates = []
+        min_area = (img_h * img_w) * 0.0001
+        max_area = (img_h * img_w) * 0.015
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if min_area < area < max_area:
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+                if len(approx) == 4 and cv2.isContourConvex(approx):
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cx = float(M["m10"] / M["m00"])
+                        cy = float(M["m01"] / M["m00"])
+                        candidates.append((cx, cy, area))
+
+        markers = self.detect_markers(image)
+        return markers, candidates
 
     def align_with_orb_features(self, image: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """

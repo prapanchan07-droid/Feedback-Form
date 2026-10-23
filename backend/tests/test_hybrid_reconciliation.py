@@ -18,7 +18,8 @@ def test_field_reconciler_corroborated_mobile():
     rec = FieldReconciler.reconcile_field("student_mobile_number", qwen_val, ocr_res)
     assert rec["status"] == "CORROBORATED"
     assert rec["final_value"] == "9432164321"
-    assert rec["final_confidence"] == 0.98
+    assert rec["final_confidence"] == 0.9
+    assert rec["evidence_level"] == "HIGH"
     assert rec["source"] == "ocr+vlm"
 
 def test_field_reconciler_ocr_override_mobile():
@@ -66,7 +67,8 @@ def test_field_reconciler_cutoff_corroboration():
     rec = FieldReconciler.reconcile_field("cut_off_marks", qwen_val, ocr_res)
     assert rec["status"] == "CORROBORATED"
     assert rec["final_value"] == "184.56"
-    assert rec["final_confidence"] == 0.98
+    assert rec["final_confidence"] == 0.9
+    assert rec["evidence_level"] == "HIGH"
 
 def test_scratch_manager_job_isolation(tmp_path):
     job_id = "test_job_123"
@@ -133,4 +135,66 @@ def test_map_bbox_norm_resolution_invariance():
     x1_1k, y1_1k, x2_1k, y2_1k = ImagePreprocessor.map_bbox_norm((0.1, 0.2, 0.5, 0.6), 1280, 904)
     assert abs(x1_2k - 2 * x1_1k) <= 1
     assert abs(y1_2k - 2 * y1_1k) <= 1
+
+def test_qwen_only_reconciliation_verified():
+    rec = FieldReconciler.reconcile_field(
+        "student_mobile_number",
+        "9876543210",
+        cnn_result=None,
+        field_meta={"pass1": "9876543210", "pass2": "9876543210", "evidence_level": "HIGH", "status": "VERIFIED"}
+    )
+    assert rec["status"] == "VERIFIED"
+    assert rec["evidence_level"] == "HIGH"
+    assert rec["final_confidence"] == 0.9
+    assert rec["final_value"] == "9876543210"
+    assert rec["first_pass_value"] == "9876543210"
+    assert rec["verification_value"] == "9876543210"
+
+def test_qwen_only_reconciliation_conflict():
+    rec = FieldReconciler.reconcile_field(
+        "student_mobile_number",
+        "9876543210",
+        cnn_result=None,
+        field_meta={"pass1": "9876543210", "pass2": "9876543211", "evidence_level": "LOW", "status": "NEEDS_REVIEW"}
+    )
+    assert rec["status"] == "CONFLICT"
+    assert rec["evidence_level"] == "LOW"
+    assert rec["final_confidence"] == 0.3
+    assert rec["final_value"] == "9876543210"
+
+def test_qwen_only_reconciliation_invalid():
+    rec = FieldReconciler.reconcile_field(
+        "student_mobile_number",
+        "12345",
+        cnn_result=None,
+        field_meta={"pass1": "12345", "pass2": None, "evidence_level": "MEDIUM", "status": "EXTRACTED"}
+    )
+    assert rec["status"] == "INVALID"
+    assert rec["evidence_level"] == "LOW"
+    assert rec["final_confidence"] == 0.3
+
+def test_qwen_only_reconciliation_single_pass_extracted():
+    rec = FieldReconciler.reconcile_field(
+        "student_name",
+        "VIKRAM S",
+        cnn_result=None,
+        field_meta={"pass1": "VIKRAM S", "pass2": None, "evidence_level": "MEDIUM", "status": "EXTRACTED"}
+    )
+    assert rec["status"] == "EXTRACTED"
+    assert rec["evidence_level"] == "MEDIUM"
+    assert rec["final_confidence"] == 0.6
+    assert rec["final_value"] == "VIKRAM S"
+
+def test_qwen_only_reconciliation_validation_warning():
+    rec = FieldReconciler.reconcile_field(
+        "date",
+        "12/05/2024",
+        cnn_result=None,
+        field_meta={"pass1": "12/05/2024", "pass2": None, "evidence_level": "MEDIUM", "status": "EXTRACTED"},
+        validation_info={"status": "needs_review", "reason": "Future date warning"}
+    )
+    assert rec["status"] == "NEEDS_REVIEW"
+    assert rec["evidence_level"] == "LOW"
+    assert rec["final_confidence"] == 0.3
+
 

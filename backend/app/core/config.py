@@ -7,7 +7,7 @@ except ImportError:
     pass
 
 try:
-    from pydantic_settings import BaseSettings
+    from pydantic import BaseSettings
 except ImportError:
     from pydantic_settings import BaseSettings
 from typing import Dict, Any
@@ -17,10 +17,10 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", os.getenv("QWEN_API_KEY", ""))
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", os.getenv("QWEN_MODEL", "qwen/qwen-2.5-vl-72b-instruct"))
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", os.getenv("QWEN_MODEL", "qwen/qwen3-vl-235b-a22b-instruct"))
 
     QWEN_API_KEY: str = os.getenv("QWEN_API_KEY", os.getenv("GEMINI_API_KEY", ""))
-    QWEN_MODEL: str = os.getenv("QWEN_MODEL", os.getenv("GEMINI_MODEL", "qwen/qwen-2.5-vl-72b-instruct"))
+    QWEN_MODEL: str = os.getenv("QWEN_MODEL", os.getenv("GEMINI_MODEL", "qwen/qwen3-vl-235b-a22b-instruct"))
 
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./app.db")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")

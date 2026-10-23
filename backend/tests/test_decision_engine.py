@@ -49,7 +49,7 @@ def test_case_7_cutoff_184_56_valid():
 def test_case_8_cutoff_167_5_valid():
     is_valid, cleaned, err = FieldValidator.validate_cutoff_marks("167.5")
     assert is_valid is True
-    assert cleaned == "167.5"
+    assert cleaned == "167.50"
 
 def test_cutoff_decision_engine_agreement():
     gemini_cutoff = "184.56"

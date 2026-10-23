@@ -33,6 +33,15 @@ export const api = {
     return res.data.data;
   },
 
+  uploadBatch: async (files: File[]) => {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+    const res = await axios.post(`${API_BASE}/documents/batch`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return res.data.data;
+  },
+
   getPageResults: async (pageId: number): Promise<PageResult> => {
     const res = await axios.get(`${API_BASE}/pages/${pageId}/results`);
     return res.data.data;
@@ -58,6 +67,11 @@ export const api = {
       epochs,
       learning_rate: lr
     });
+    return res.data.data;
+  },
+
+  reprocessDocument: async (docId: number) => {
+    const res = await axios.post(`${API_BASE}/documents/${docId}/reprocess`);
     return res.data.data;
   }
 };

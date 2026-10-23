@@ -23,6 +23,12 @@ export interface PageResult {
   status: string;
   original_image_path: string;
   aligned_image_path?: string;
+  /** HTTP URL served by /storage static mount */
+  original_image_url?: string;
+  /** HTTP URL for the aligned image; empty string when not available */
+  aligned_image_url?: string;
+  /** True only when a genuine perspective warp was computed (not letterbox fallback) */
+  is_warped?: boolean;
   fields: Record<string, FieldExtraction>;
   verification_decisions: VerificationDecision[];
 }

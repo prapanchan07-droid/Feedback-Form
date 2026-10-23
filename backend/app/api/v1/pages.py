@@ -3,8 +3,24 @@ from sqlalchemy.orm import Session
 from backend.app.db.session import get_db
 from backend.app.models.domain import Page, FieldExtraction, VerificationDecision, AuditLog
 from backend.app.schemas.pydantic_models import APIResponse, ManualVerificationRequest
+import os
 
 router = APIRouter(prefix="/pages", tags=["pages"])
+
+STORAGE_ROOT = os.path.abspath("./storage")
+
+def _path_to_url(local_path: str) -> str:
+    """Convert a local storage path like ./storage/uploads/foo.jpg -> /storage/uploads/foo.jpg"""
+    if not local_path:
+        return ""
+    abs_path = os.path.abspath(local_path)
+    try:
+        rel = os.path.relpath(abs_path, os.path.abspath("."))
+        # Normalise to forward slashes for URL
+        url = "/" + rel.replace(os.sep, "/")
+        return url
+    except ValueError:
+        return local_path
 
 @router.get("/{page_id}/results", response_model=APIResponse)
 def get_page_results(page_id: int, db: Session = Depends(get_db)):
@@ -43,6 +59,9 @@ def get_page_results(page_id: int, db: Session = Depends(get_db)):
         "status": page.status,
         "original_image_path": page.original_image_path,
         "aligned_image_path": page.aligned_image_path,
+        "original_image_url": _path_to_url(page.original_image_path),
+        "aligned_image_url": _path_to_url(page.aligned_image_path) if page.aligned_image_path else "",
+        "is_warped": bool(getattr(page, 'is_warped', None) or (page.aligned_image_path and page.aligned_image_path != page.original_image_path)),
         "fields": field_map,
         "verification_decisions": dec_list
     })

@@ -20,6 +20,44 @@ class ImagePreprocessor:
         return bgr
 
     @staticmethod
+    def assess_quality(image: np.ndarray, orientation_corrected: bool = False) -> dict:
+        """Assess image quality for extraction confidence.
+        
+        Returns quality metadata without rejecting images.
+        Quality info feeds into reconciliation evidence.
+        """
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            h, w = image.shape[:2]
+        else:
+            gray = image
+            h, w = image.shape[:2]
+
+        blur_score = round(float(cv2.Laplacian(gray, cv2.CV_64F).var()), 2)
+        contrast = round(float(gray.std()), 2)
+
+        if blur_score > 200 and contrast > 50:
+            quality_status = "GOOD"
+        elif blur_score > 50:
+            quality_status = "ACCEPTABLE"
+        else:
+            quality_status = "POOR"
+
+        is_adequate = quality_status in ("GOOD", "ACCEPTABLE")
+
+        print(f"[IMAGE QUALITY] blur={blur_score} contrast={contrast} res={w}x{h} status={quality_status}")
+
+        return {
+            "width": w,
+            "height": h,
+            "blur_score": blur_score,
+            "contrast": contrast,
+            "quality_status": quality_status,
+            "is_adequate": is_adequate,
+            "orientation_corrected": orientation_corrected,
+        }
+
+    @staticmethod
     def deskew_image(gray: np.ndarray) -> Tuple[np.ndarray, float]:
         """
         Calculates skew angle via Minimum Area Bounding Box on Otsu thresholding and rotates image if angle is valid.

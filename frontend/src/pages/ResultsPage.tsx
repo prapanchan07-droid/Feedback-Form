@@ -4,7 +4,7 @@ import { DocumentItem, PageResult } from '../types';
 import { ImageViewer } from '../components/ImageViewer';
 import { ComparisonTable } from '../components/ComparisonTable';
 import { ManualReviewModal } from '../components/ManualReviewModal';
-import { Download, FileText, ChevronRight } from 'lucide-react';
+import { Download, FileText, ChevronRight, RefreshCw } from 'lucide-react';
 
 export const ResultsPage: React.FC = () => {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -17,6 +17,7 @@ export const ResultsPage: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [activeFieldName, setActiveFieldName] = useState('');
   const [activeFieldValue, setActiveFieldValue] = useState('');
+  const [reprocessing, setReprocessing] = useState(false);
 
   useEffect(() => {
     fetchDocuments();
@@ -73,6 +74,38 @@ export const ResultsPage: React.FC = () => {
     }
   };
 
+  const handleReprocess = async () => {
+    if (!selectedDocId) return;
+    setReprocessing(true);
+    try {
+      await api.reprocessDocument(selectedDocId);
+      // Poll until reprocessing completes (max 120s)
+      const maxWait = 120;
+      const interval = 3;
+      for (let elapsed = 0; elapsed < maxWait; elapsed += interval) {
+        await new Promise(r => setTimeout(r, interval * 1000));
+        const details = await api.getDocumentDetails(selectedDocId);
+        if (details.status === 'COMPLETED' || details.status === 'PARTIAL_FAILURE') {
+          setDocDetails(details);
+          if (details.pages && details.pages.length > 0) {
+            await handleSelectPage(details.pages[0].page_id);
+          }
+          break;
+        }
+      }
+      await fetchDocuments();
+    } catch (err) {
+      console.error('Error reprocessing document', err);
+    } finally {
+      setReprocessing(false);
+    }
+  };
+
+  // Detect if all fields are blank (rate-limited extraction)
+  const allFieldsBlank = pageResult && pageResult.fields
+    ? Object.values(pageResult.fields).every((f: any) => !f.raw_value && !f.normalized_value && (f.confidence === 0 || f.confidence === null))
+    : false;
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -84,14 +117,28 @@ export const ResultsPage: React.FC = () => {
         </div>
 
         {selectedDocId && (
-          <a
-            href={`/api/v1/documents/${selectedDocId}/export/csv`}
-            download
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium flex items-center shadow-sm"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export Document CSV
-          </a>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleReprocess}
+              disabled={reprocessing}
+              className={`px-4 py-2 rounded-md text-sm font-medium flex items-center shadow-sm ${
+                reprocessing
+                  ? 'bg-amber-400 text-amber-900 cursor-wait'
+                  : 'bg-amber-500 hover:bg-amber-600 text-white'
+              }`}
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${reprocessing ? 'animate-spin' : ''}`} />
+              {reprocessing ? 'Reprocessing…' : 'Reprocess'}
+            </button>
+            <a
+              href={`/api/v1/documents/${selectedDocId}/export/csv`}
+              download
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium flex items-center shadow-sm"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export CSV
+            </a>
+          </div>
         )}
       </div>
 
@@ -144,7 +191,11 @@ export const ResultsPage: React.FC = () => {
           {pageResult ? (
             <>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <ImageViewer imageSrc={`/${pageResult.aligned_image_path || pageResult.original_image_path}`} />
+                <ImageViewer
+                  originalSrc={pageResult.original_image_url || `/${pageResult.original_image_path}`}
+                  alignedSrc={pageResult.aligned_image_url || undefined}
+                  isWarped={!!pageResult.is_warped}
+                />
                 <div className="space-y-4">
                   <div className="bg-white p-4 rounded-lg shadow border border-slate-200 space-y-2">
                     <h4 className="text-xs font-bold uppercase text-slate-500">Page Status Overview</h4>
@@ -152,6 +203,13 @@ export const ResultsPage: React.FC = () => {
                       <span className="text-slate-600">Processing Status:</span>
                       <span className="font-mono font-semibold text-slate-900">{pageResult.status}</span>
                     </div>
+                    {allFieldsBlank && (
+                      <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                        <p className="text-xs text-amber-800 font-medium mb-2">
+                          ⚠️ All fields are blank — likely due to API rate-limiting (429). Click Reprocess above to retry.
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <ComparisonTable

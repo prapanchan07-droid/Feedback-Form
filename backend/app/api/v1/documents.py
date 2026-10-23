@@ -208,3 +208,44 @@ def export_document_csv(document_id: int, db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=document_{document_id}_extracted.csv"}
     )
+
+@router.post("/{document_id}/reprocess", response_model=APIResponse)
+async def reprocess_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Re-runs the Qwen extraction pipeline for a document.
+    Use when extraction failed due to rate-limiting (429) or returned blank fields.
+    Existing extraction results are cleared and replaced by the new run.
+    """
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Reset document status
+    doc.status = "UPLOADED"
+    db.commit()
+
+    # Create a new extraction job
+    job_id = str(uuid.uuid4())
+    job = ExtractionJob(
+        id=job_id,
+        document_id=doc.id,
+        stage="UPLOADED",
+        progress=0.0,
+        status="PENDING"
+    )
+    db.add(job)
+    db.commit()
+
+    # Dispatch pipeline in background
+    background_tasks.add_task(process_document_pipeline_sync, job_id, doc.id)
+
+    return APIResponse(data={
+        "document_id": doc.id,
+        "job_id": job_id,
+        "message": f"Reprocessing started for document '{doc.filename}'.",
+        "status": "PENDING"
+    })
